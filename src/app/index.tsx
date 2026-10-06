@@ -1,4 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import * as Notifications from 'expo-notifications';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -7,6 +9,14 @@ import Svg, { Circle } from 'react-native-svg';
 import { captureRef } from 'react-native-view-shot';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 const MOODS = [
   { emoji: '😄', label: 'Great' },
@@ -65,6 +75,12 @@ type DayData = {
   date?: string;
 };
 
+type ReminderConfig = {
+  enabled: boolean;
+  hour: number;
+  minute: number;
+};
+
 type AppState = {
   days: DayData[];
   startDate: string;
@@ -74,6 +90,7 @@ type AppState = {
   habitName: string;
   userName: string;
   avatarId: string;
+  reminder: ReminderConfig;
   needsSetup: boolean;
 };
 
@@ -95,6 +112,12 @@ const buildDays = (startDate: string, offset: number, totalDays: number): DayDat
   });
 };
 
+const defaultReminder = (): ReminderConfig => ({
+  enabled: false,
+  hour: 8,
+  minute: 0,
+});
+
 const createInitialState = (): AppState => ({
   days: [],
   startDate: todayISO(),
@@ -104,6 +127,7 @@ const createInitialState = (): AppState => ({
   habitName: '',
   userName: '',
   avatarId: 'fox',
+  reminder: defaultReminder(),
   needsSetup: true,
 });
 
@@ -123,6 +147,7 @@ const createStartedState = (
     habitName,
     userName,
     avatarId,
+    reminder: defaultReminder(),
     needsSetup: false,
   };
 };
@@ -158,9 +183,10 @@ export default function HomeScreen() {
   const [reflectionDay, setReflectionDay] = useState<number | null>(null);
   const [reflectionText, setReflectionText] = useState('');
   const [confettiKey, setConfettiKey] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [timePickerOpen, setTimePickerOpen] = useState(false);
   const cardRef = useRef<View>(null);
 
-  // Animated values
   const ringProgress = useRef(new Animated.Value(0)).current;
   const glowPulse = useRef(new Animated.Value(0)).current;
   const avatarScale = useRef(new Animated.Value(0.3)).current;
@@ -185,6 +211,7 @@ export default function HomeScreen() {
             habitName: parsed.habitName || 'Morning Meditation',
             userName: parsed.userName || '',
             avatarId: parsed.avatarId || 'fox',
+            reminder: parsed.reminder || defaultReminder(),
             needsSetup: parsed.needsSetup ?? false,
           };
           setState({ ...hydrated, days: recomputeStatuses(hydrated) });
@@ -205,7 +232,90 @@ export default function HomeScreen() {
     );
   }, [state, loaded]);
 
-  // Confetti fires ONCE per celebration open (no loop)
+  useEffect(() => {
+    if (!loaded || state.needsSetup) return;
+    scheduleReminder(state);
+  }, [state.reminder, state.days, loaded, state.needsSetup]);
+
+  const scheduleReminder = async (s: AppState) => {
+    try {
+      await Notifications.cancelAllScheduledNotificationsAsync();
+
+      if (!s.reminder.enabled) return;
+
+      const todayCheckedIn = s.days.some(
+        (d) => d.status === 'completed' && d.date === todayISO()
+      );
+      if (todayCheckedIn) return;
+
+      const { status } = await Notifications.getPermissionsAsync();
+      let finalStatus = status;
+      if (status !== 'granted') {
+        const { status: askStatus } = await Notifications.requestPermissionsAsync();
+        finalStatus = askStatus;
+      }
+      if (finalStatus !== 'granted') return;
+
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: `Time for ${s.habitName} 🌱`,
+          body: `Don't break the streak. Tap to check in.`,
+          sound: true,
+        },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DAILY,
+          hour: s.reminder.hour,
+          minute: s.reminder.minute,
+        },
+      });
+    } catch (e) {
+      console.log('Reminder scheduling failed:', e);
+    }
+  };
+
+  const toggleReminder = async (enabled: boolean) => {
+    if (enabled) {
+      const { status } = await Notifications.getPermissionsAsync();
+      if (status !== 'granted') {
+        const { status: askStatus } = await Notifications.requestPermissionsAsync();
+        if (askStatus !== 'granted') {
+          setState((prev) => ({
+            ...prev,
+            reminder: { ...prev.reminder, enabled: false },
+          }));
+          return;
+        }
+      }
+    }
+    setState((prev) => ({
+      ...prev,
+      reminder: { ...prev.reminder, enabled },
+    }));
+  };
+
+  const onChangeTime = (event: any, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setTimePickerOpen(false);
+    }
+    if (event.type === 'dismissed') return;
+    if (selectedDate) {
+      setState((prev) => ({
+        ...prev,
+        reminder: {
+          ...prev.reminder,
+          hour: selectedDate.getHours(),
+          minute: selectedDate.getMinutes(),
+        },
+      }));
+    }
+  };
+
+  const getReminderDate = () => {
+    const d = new Date();
+    d.setHours(state.reminder.hour, state.reminder.minute, 0, 0);
+    return d;
+  };
+
   useEffect(() => {
     if (celebration === null) return;
     setConfettiKey(1);
@@ -238,93 +348,37 @@ export default function HomeScreen() {
     sparkle2Y.setValue(0);
 
     Animated.sequence([
-      Animated.spring(avatarScale, {
-        toValue: 1,
-        friction: 5,
-        tension: 60,
-        useNativeDriver: true,
-      }),
+      Animated.spring(avatarScale, { toValue: 1, friction: 5, tension: 60, useNativeDriver: true }),
       Animated.parallel([
-        Animated.timing(ringProgress, {
-          toValue: 1,
-          duration: 1200,
-          useNativeDriver: false,
-        }),
-        Animated.spring(crownDrop, {
-          toValue: 0,
-          friction: 6,
-          tension: 40,
-          useNativeDriver: true,
-        }),
-        Animated.timing(sparkle1, {
-          toValue: 1,
-          duration: 500,
-          delay: 600,
-          useNativeDriver: true,
-        }),
-        Animated.timing(sparkle2, {
-          toValue: 1,
-          duration: 500,
-          delay: 800,
-          useNativeDriver: true,
-        }),
+        Animated.timing(ringProgress, { toValue: 1, duration: 1200, useNativeDriver: false }),
+        Animated.spring(crownDrop, { toValue: 0, friction: 6, tension: 40, useNativeDriver: true }),
+        Animated.timing(sparkle1, { toValue: 1, duration: 500, delay: 600, useNativeDriver: true }),
+        Animated.timing(sparkle2, { toValue: 1, duration: 500, delay: 800, useNativeDriver: true }),
       ]),
       Animated.parallel([
-        Animated.timing(cardFade, {
-          toValue: 1,
-          duration: 400,
-          useNativeDriver: true,
-        }),
-        Animated.timing(cardSlide, {
-          toValue: 0,
-          duration: 400,
-          useNativeDriver: true,
-        }),
+        Animated.timing(cardFade, { toValue: 1, duration: 400, useNativeDriver: true }),
+        Animated.timing(cardSlide, { toValue: 0, duration: 400, useNativeDriver: true }),
       ]),
     ]).start();
 
     Animated.loop(
       Animated.sequence([
-        Animated.timing(glowPulse, {
-          toValue: 1,
-          duration: 1400,
-          useNativeDriver: true,
-        }),
-        Animated.timing(glowPulse, {
-          toValue: 0,
-          duration: 1400,
-          useNativeDriver: true,
-        }),
+        Animated.timing(glowPulse, { toValue: 1, duration: 1400, useNativeDriver: true }),
+        Animated.timing(glowPulse, { toValue: 0, duration: 1400, useNativeDriver: true }),
       ])
     ).start();
 
     Animated.loop(
       Animated.sequence([
-        Animated.timing(crownPulse, {
-          toValue: 1.08,
-          duration: 900,
-          useNativeDriver: true,
-        }),
-        Animated.timing(crownPulse, {
-          toValue: 1,
-          duration: 900,
-          useNativeDriver: true,
-        }),
+        Animated.timing(crownPulse, { toValue: 1.08, duration: 900, useNativeDriver: true }),
+        Animated.timing(crownPulse, { toValue: 1, duration: 900, useNativeDriver: true }),
       ])
     ).start();
 
     Animated.loop(
       Animated.sequence([
-        Animated.timing(sparkle2Y, {
-          toValue: -6,
-          duration: 1200,
-          useNativeDriver: true,
-        }),
-        Animated.timing(sparkle2Y, {
-          toValue: 0,
-          duration: 1200,
-          useNativeDriver: true,
-        }),
+        Animated.timing(sparkle2Y, { toValue: -6, duration: 1200, useNativeDriver: true }),
+        Animated.timing(sparkle2Y, { toValue: 0, duration: 1200, useNativeDriver: true }),
       ])
     ).start();
   }, [celebration]);
@@ -395,10 +449,6 @@ export default function HomeScreen() {
     setPickerOpen(true);
   };
 
-  const handleMoodSelect = (emoji: string) => {
-    setPendingMood(emoji);
-  };
-
   const handleConfirmCheckIn = () => {
     if (!pendingMood) return;
     const finalMood = pendingMood;
@@ -461,6 +511,7 @@ export default function HomeScreen() {
   };
 
   const handleReset = async () => {
+    await Notifications.cancelAllScheduledNotificationsAsync();
     await AsyncStorage.removeItem(STORAGE_KEY);
     setState(createInitialState());
     setActiveMilestone(1);
@@ -468,6 +519,7 @@ export default function HomeScreen() {
     setInputName('');
     setInputHabit('');
     setSelectedAvatar('fox');
+    setSettingsOpen(false);
   };
 
   const handleAdvanceDay = () => {
@@ -512,6 +564,12 @@ export default function HomeScreen() {
       case 'today': return styles.cellToday;
       case 'future': return styles.cellFuture;
     }
+  };
+
+  const formatTime = (hour: number, minute: number) => {
+    const d = new Date();
+    d.setHours(hour, minute);
+    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   };
 
   if (!loaded) {
@@ -597,10 +655,7 @@ export default function HomeScreen() {
                   </TouchableOpacity>
                 ))}
               </View>
-              <TouchableOpacity
-                style={styles.nextButton}
-                onPress={() => setSetupStep(4)}
-              >
+              <TouchableOpacity style={styles.nextButton} onPress={() => setSetupStep(4)}>
                 <Text style={styles.nextButtonText}>Next</Text>
               </TouchableOpacity>
             </>
@@ -628,10 +683,7 @@ export default function HomeScreen() {
 
           <View style={styles.stepDots}>
             {[1, 2, 3, 4].map((s) => (
-              <View
-                key={s}
-                style={[styles.stepDot, setupStep >= s && styles.stepDotActive]}
-              />
+              <View key={s} style={[styles.stepDot, setupStep >= s && styles.stepDotActive]} />
             ))}
           </View>
         </ScrollView>
@@ -656,16 +708,8 @@ export default function HomeScreen() {
   const milestoneTheme = celebration ? getMilestoneTheme(celebration) : MILESTONE_THEMES[0];
   const isFinalMilestone = celebration === totalMilestones;
 
-  const glowOpacity = glowPulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.12, 0.28],
-  });
-
-  const glowScale = glowPulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 1.12],
-  });
-
+  const glowOpacity = glowPulse.interpolate({ inputRange: [0, 1], outputRange: [0.12, 0.28] });
+  const glowScale = glowPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] });
   const ringStrokeDashoffset = ringProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [RING_CIRCUMFERENCE, 0],
@@ -676,14 +720,18 @@ export default function HomeScreen() {
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <View style={[styles.miniAvatar, { backgroundColor: activeAvatar.color + '33', borderColor: activeAvatar.color }]}>
+            <TouchableOpacity
+              style={[styles.miniAvatar, { backgroundColor: activeAvatar.color + '33', borderColor: activeAvatar.color }]}
+              onPress={() => setSettingsOpen(true)}
+              activeOpacity={0.7}
+            >
               <Text style={styles.miniAvatarEmoji}>{activeAvatar.emoji}</Text>
               {latestMood && (
                 <View style={[styles.miniAvatarBadge, { backgroundColor: milestoneTheme.accent }]}>
                   <Text style={styles.miniAvatarBadgeText}>{latestMood}</Text>
                 </View>
               )}
-            </View>
+            </TouchableOpacity>
             <View>
               <Text style={styles.appName}>{state.userName}</Text>
               <Text style={styles.date}>Today</Text>
@@ -729,14 +777,18 @@ export default function HomeScreen() {
                 : 'Keep showing up — even with grace days'}
             </Text>
           </View>
+
+          {state.reminder.enabled && (
+            <View style={styles.reminderPill}>
+              <Text style={styles.reminderPillText}>
+                ⏰ Reminder at {formatTime(state.reminder.hour, state.reminder.minute)}
+              </Text>
+            </View>
+          )}
         </View>
 
         <Text style={styles.milestoneLabel}>Milestone</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.milestoneScroll}
-        >
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.milestoneScroll}>
           {Array.from({ length: totalMilestones }, (_, i) => i + 1).map((m) => (
             <TouchableOpacity
               key={m}
@@ -790,11 +842,9 @@ export default function HomeScreen() {
         </View>
       </ScrollView>
 
+      {/* Emoji picker */}
       <Modal visible={pickerOpen} transparent animationType="slide" onRequestClose={() => setPickerOpen(false)}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalBackdrop}
-        >
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBackdrop}>
           <Pressable style={styles.modalBackdrop} onPress={() => setPickerOpen(false)}>
             <Pressable style={styles.modalSheet} onPress={(e) => e.stopPropagation()}>
               <View style={styles.modalHandle} />
@@ -804,18 +854,14 @@ export default function HomeScreen() {
                 {MOODS.map((m) => (
                   <TouchableOpacity
                     key={m.label}
-                    style={[
-                      styles.moodButton,
-                      pendingMood === m.emoji && styles.moodButtonSelected,
-                    ]}
-                    onPress={() => handleMoodSelect(m.emoji)}
+                    style={[styles.moodButton, pendingMood === m.emoji && styles.moodButtonSelected]}
+                    onPress={() => setPendingMood(m.emoji)}
                   >
                     <Text style={styles.moodEmoji}>{m.emoji}</Text>
                     <Text style={styles.moodLabel}>{m.label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
-
               <TextInput
                 style={styles.noteInput}
                 placeholder="Add a note (optional)"
@@ -825,7 +871,6 @@ export default function HomeScreen() {
                 maxLength={80}
                 multiline
               />
-
               <TouchableOpacity
                 style={[styles.confirmButton, !pendingMood && styles.nextButtonDisabled]}
                 onPress={handleConfirmCheckIn}
@@ -835,7 +880,6 @@ export default function HomeScreen() {
                   {pendingMood ? 'Confirm Check-in' : 'Pick a mood first'}
                 </Text>
               </TouchableOpacity>
-
               <TouchableOpacity style={styles.cancelButton} onPress={() => setPickerOpen(false)}>
                 <Text style={styles.cancelText}>Cancel</Text>
               </TouchableOpacity>
@@ -844,24 +888,14 @@ export default function HomeScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      <Modal
-        visible={reflectionDay !== null}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setReflectionDay(null)}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalBackdrop}
-        >
+      {/* Reflection prompt */}
+      <Modal visible={reflectionDay !== null} transparent animationType="slide" onRequestClose={() => setReflectionDay(null)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBackdrop}>
           <Pressable style={styles.modalBackdrop} onPress={() => setReflectionDay(null)}>
             <Pressable style={styles.modalSheet} onPress={(e) => e.stopPropagation()}>
               <View style={styles.modalHandle} />
               <Text style={styles.modalTitle}>Rough day, huh?</Text>
-              <Text style={styles.modalSubtitle}>
-                No pressure. A note helps you spot patterns later.
-              </Text>
-
+              <Text style={styles.modalSubtitle}>No pressure. A note helps you spot patterns later.</Text>
               <TextInput
                 style={styles.noteInput}
                 placeholder="What made today hard? (optional)"
@@ -871,15 +905,10 @@ export default function HomeScreen() {
                 maxLength={120}
                 multiline
               />
-
               <TouchableOpacity style={styles.confirmButton} onPress={handleApplyGrace}>
                 <Text style={styles.confirmButtonText}>Use Grace Day</Text>
               </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => setReflectionDay(null)}
-              >
+              <TouchableOpacity style={styles.cancelButton} onPress={() => setReflectionDay(null)}>
                 <Text style={styles.cancelText}>Cancel</Text>
               </TouchableOpacity>
             </Pressable>
@@ -887,12 +916,8 @@ export default function HomeScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      <Modal
-        visible={noteViewerDay !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setNoteViewerDay(null)}
-      >
+      {/* Note viewer */}
+      <Modal visible={noteViewerDay !== null} transparent animationType="fade" onRequestClose={() => setNoteViewerDay(null)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setNoteViewerDay(null)}>
           <Pressable style={styles.noteViewerSheet} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.noteViewerDay}>Day {noteViewerDay?.day}</Text>
@@ -905,22 +930,71 @@ export default function HomeScreen() {
             ) : !noteViewerDay?.reflection ? (
               <Text style={styles.noteViewerEmpty}>No note for this day</Text>
             ) : null}
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={() => setNoteViewerDay(null)}
-            >
+            <TouchableOpacity style={styles.cancelButton} onPress={() => setNoteViewerDay(null)}>
               <Text style={styles.cancelText}>Close</Text>
             </TouchableOpacity>
           </Pressable>
         </Pressable>
       </Modal>
 
-      <Modal
-        visible={celebration !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setCelebration(null)}
-      >
+      {/* Settings + native time picker */}
+      <Modal visible={settingsOpen} transparent animationType="slide" onRequestClose={() => setSettingsOpen(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setSettingsOpen(false)}>
+          <Pressable style={styles.modalSheet} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalTitle}>Reminder</Text>
+            <Text style={styles.modalSubtitle}>
+              Get a daily nudge if you haven't checked in yet
+            </Text>
+
+            <View style={styles.reminderRow}>
+              <Text style={styles.reminderLabel}>Daily reminder</Text>
+              <TouchableOpacity
+                style={[styles.toggle, state.reminder.enabled && styles.toggleOn]}
+                onPress={() => toggleReminder(!state.reminder.enabled)}
+              >
+                <View style={[styles.toggleKnob, state.reminder.enabled && styles.toggleKnobOn]} />
+              </TouchableOpacity>
+            </View>
+
+            {state.reminder.enabled && (
+              <>
+                <Text style={styles.pickerLabel}>Time</Text>
+                <TouchableOpacity
+                  style={styles.timeButton}
+                  onPress={() => setTimePickerOpen(true)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.timeButtonText}>
+                    {formatTime(state.reminder.hour, state.reminder.minute)}
+                  </Text>
+                  <Text style={styles.timeButtonHint}>Tap to change</Text>
+                </TouchableOpacity>
+
+                {(timePickerOpen || Platform.OS === 'ios') && (
+                  <View style={styles.pickerWrapper}>
+                    <DateTimePicker
+                      value={getReminderDate()}
+                      mode="time"
+                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                      onChange={onChangeTime}
+                      themeVariant="dark"
+                      textColor="#FFFFFF"
+                    />
+                  </View>
+                )}
+              </>
+            )}
+
+            <TouchableOpacity style={styles.cancelButton} onPress={() => setSettingsOpen(false)}>
+              <Text style={styles.cancelText}>Done</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Celebration */}
+      <Modal visible={celebration !== null} transparent animationType="fade" onRequestClose={() => setCelebration(null)}>
         <View style={styles.celebrationBackdrop}>
           {celebration !== null && confettiKey > 0 && (
             <ConfettiCannon
@@ -948,24 +1022,14 @@ export default function HomeScreen() {
           )}
           <ScrollView contentContainerStyle={styles.celebrationScroll} showsVerticalScrollIndicator={false}>
             <View style={styles.celebrationContent}>
-
               <View style={styles.ringWrapper}>
                 <Animated.View
                   style={[
                     styles.celebrationGlow,
-                    {
-                      backgroundColor: milestoneTheme.accent,
-                      opacity: glowOpacity,
-                      transform: [{ scale: glowScale }],
-                    },
+                    { backgroundColor: milestoneTheme.accent, opacity: glowOpacity, transform: [{ scale: glowScale }] },
                   ]}
                 />
-
-                <Svg
-                  width={RING_SIZE}
-                  height={RING_SIZE}
-                  style={styles.svgRing}
-                >
+                <Svg width={RING_SIZE} height={RING_SIZE} style={styles.svgRing}>
                   <Circle
                     cx={RING_SIZE / 2}
                     cy={RING_SIZE / 2}
@@ -987,58 +1051,28 @@ export default function HomeScreen() {
                     transform={`rotate(-90 ${RING_SIZE / 2} ${RING_SIZE / 2})`}
                   />
                 </Svg>
-
-                <Animated.View
-                  style={[
-                    styles.avatarContainer,
-                    { transform: [{ scale: avatarScale }] },
-                  ]}
-                >
+                <Animated.View style={[styles.avatarContainer, { transform: [{ scale: avatarScale }] }]}>
                   <View style={styles.avatarCircle}>
                     <Text style={styles.celebrationEmoji}>{activeAvatar.emoji}</Text>
                   </View>
-
                   {latestMood && (
                     <View style={[styles.avatarMoodBadge, { backgroundColor: milestoneTheme.accent }]}>
                       <Text style={styles.avatarMoodBadgeText}>{latestMood}</Text>
                     </View>
                   )}
                 </Animated.View>
-
-                <Animated.View
-                  style={[
-                    styles.crownWrapper,
-                    { transform: [{ translateY: crownDrop }, { scale: crownPulse }] },
-                  ]}
-                >
+                <Animated.View style={[styles.crownWrapper, { transform: [{ translateY: crownDrop }, { scale: crownPulse }] }]}>
                   <Text style={styles.crownEmoji}>👑</Text>
                 </Animated.View>
-
-                <Animated.Text
-                  style={[
-                    styles.sparkleLeft,
-                    {
-                      opacity: sparkle1,
-                      transform: [{ translateY: sparkle2Y }],
-                    },
-                  ]}
-                >
+                <Animated.Text style={[styles.sparkleLeft, { opacity: sparkle1, transform: [{ translateY: sparkle2Y }] }]}>
                   ✨
                 </Animated.Text>
-
                 <Animated.Text
                   style={[
                     styles.sparkleRight,
                     {
                       opacity: sparkle2,
-                      transform: [
-                        {
-                          translateY: sparkle2Y.interpolate({
-                            inputRange: [-6, 0],
-                            outputRange: [6, 0],
-                          }),
-                        },
-                      ],
+                      transform: [{ translateY: sparkle2Y.interpolate({ inputRange: [-6, 0], outputRange: [6, 0] }) }],
                     },
                   ]}
                 >
@@ -1049,20 +1083,16 @@ export default function HomeScreen() {
               <Text style={[styles.celebrationEyebrow, { color: milestoneTheme.accent }]}>
                 {isFinalMilestone ? 'CHALLENGE COMPLETE' : `MILESTONE ${celebration} · COMPLETE`}
               </Text>
-
               <Text style={styles.celebrationTitle}>
                 {isFinalMilestone ? `You finished, ${state.userName}!` : `You did it, ${state.userName}!`}
               </Text>
-
               <Text style={styles.celebrationSubtitle}>
                 {celebrationDays.length} days of {state.habitName} — done
               </Text>
 
               <View style={styles.statsRow}>
                 <View style={styles.statBox}>
-                  <Text style={[styles.statNumber, { color: milestoneTheme.accent }]}>
-                    {celebrationCompleted}
-                  </Text>
+                  <Text style={[styles.statNumber, { color: milestoneTheme.accent }]}>{celebrationCompleted}</Text>
                   <Text style={styles.statLabel}>Completed</Text>
                 </View>
                 <View style={styles.statDivider} />
@@ -1079,31 +1109,19 @@ export default function HomeScreen() {
                 </View>
               </View>
 
-              <Animated.View
-                style={[
-                  styles.shareCardWrapper,
-                  {
-                    opacity: cardFade,
-                    transform: [{ translateY: cardSlide }],
-                  },
-                ]}
-              >
+              <Animated.View style={[styles.shareCardWrapper, { opacity: cardFade, transform: [{ translateY: cardSlide }] }]}>
                 <View ref={cardRef} collapsable={false} style={styles.shareCard}>
                   <View style={[styles.shareCardBanner, { backgroundColor: milestoneTheme.accent }]}>
                     <Text style={styles.shareCardBannerText}>
                       {isFinalMilestone ? '🏆  CHALLENGE COMPLETE' : '✓  COMPLETED'}
                     </Text>
                   </View>
-
                   <View style={styles.shareCardTop}>
                     <Text style={styles.shareCardBrand}>GraceDays</Text>
                     <View style={[styles.shareCardBadge, { backgroundColor: milestoneTheme.accent + '22', borderColor: milestoneTheme.accent }]}>
-                      <Text style={[styles.shareCardBadgeText, { color: milestoneTheme.accent }]}>
-                        M{celebration}
-                      </Text>
+                      <Text style={[styles.shareCardBadgeText, { color: milestoneTheme.accent }]}>M{celebration}</Text>
                     </View>
                   </View>
-
                   <View style={styles.shareCardUserRow}>
                     <View style={styles.shareCardAvatarWrapper}>
                       <Text style={styles.shareCardCrown}>👑</Text>
@@ -1118,13 +1136,10 @@ export default function HomeScreen() {
                     </View>
                     <Text style={styles.shareCardUserName}>{state.userName}</Text>
                   </View>
-
                   <Text style={styles.shareCardHabit}>{state.habitName}</Text>
                   <Text style={styles.shareCardRange}>
-                    D{(celebration! - 1) * MILESTONE_SIZE + 1} → D
-                    {Math.min(celebration! * MILESTONE_SIZE, totalDays)}
+                    D{(celebration! - 1) * MILESTONE_SIZE + 1} → D{Math.min(celebration! * MILESTONE_SIZE, totalDays)}
                   </Text>
-
                   <View style={styles.shareCardEmojiRow}>
                     {celebrationDays.map((d) => (
                       <View key={d.day} style={styles.shareCardEmojiCell}>
@@ -1134,29 +1149,22 @@ export default function HomeScreen() {
                       </View>
                     ))}
                   </View>
-
                   {finalNote && (
                     <View style={styles.shareCardNoteBox}>
                       <Text style={styles.shareCardNoteText}>"{finalNote}"</Text>
                     </View>
                   )}
-
                   <View style={[styles.shareCardFooter, { backgroundColor: milestoneTheme.accent + '22', borderColor: milestoneTheme.accent + '55' }]}>
                     <Text style={[styles.shareCardFooterText, { color: milestoneTheme.accent }]}>
                       🌱 {celebrationCompleted}/10 days · {celebrationGrace} grace
                     </Text>
                   </View>
-                  <Text style={styles.shareCardDate}>
-                    {todayISO()} · Keep going! 🚀
-                  </Text>
+                  <Text style={styles.shareCardDate}>{todayISO()} · Keep going! 🚀</Text>
                 </View>
               </Animated.View>
 
               <View style={styles.celebrationButtons}>
-                <TouchableOpacity
-                  style={[styles.shareButton, { backgroundColor: milestoneTheme.accent }]}
-                  onPress={handleShare}
-                >
+                <TouchableOpacity style={[styles.shareButton, { backgroundColor: milestoneTheme.accent }]} onPress={handleShare}>
                   <Text style={styles.shareButtonText}>📤  Share Progress</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.continueButton} onPress={handleContinue}>
@@ -1228,6 +1236,9 @@ const styles = StyleSheet.create({
   resilienceValue: { color: '#7DD3C0', fontSize: 18, fontWeight: '800' },
   resilienceHint: { color: '#8A9A94', fontSize: 12, flex: 1, lineHeight: 16 },
 
+  reminderPill: { marginTop: 14, backgroundColor: '#1A2622', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12, alignSelf: 'flex-start' },
+  reminderPillText: { color: '#F5C542', fontSize: 12, fontWeight: '600' },
+
   milestoneLabel: { color: '#FFFFFF', fontSize: 18, fontWeight: '700', marginBottom: 12 },
   milestoneScroll: { gap: 10, paddingRight: 20, paddingBottom: 20 },
   milestoneTab: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, backgroundColor: '#1A2622' },
@@ -1278,144 +1289,49 @@ const styles = StyleSheet.create({
   noteViewerText: { color: '#FFFFFF', fontSize: 17, fontStyle: 'italic', textAlign: 'center', lineHeight: 24, marginBottom: 24 },
   noteViewerEmpty: { color: '#5F6F68', fontSize: 15, textAlign: 'center', marginBottom: 24 },
 
-  // Celebration
+  reminderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  reminderLabel: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
+  toggle: { width: 52, height: 30, borderRadius: 15, backgroundColor: '#24332E', padding: 3, justifyContent: 'center' },
+  toggleOn: { backgroundColor: '#7DD3C0' },
+  toggleKnob: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#FFFFFF' },
+  toggleKnobOn: { alignSelf: 'flex-end' },
+  pickerLabel: { color: '#8A9A94', fontSize: 12, fontWeight: '600', letterSpacing: 1, marginBottom: 10, marginTop: 8 },
+  timeButton: { backgroundColor: '#1F3028', borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginBottom: 8, borderWidth: 1, borderColor: '#7DD3C0' },
+  timeButtonText: { color: '#7DD3C0', fontSize: 32, fontWeight: '800', marginBottom: 4 },
+  timeButtonHint: { color: '#5F6F68', fontSize: 11, fontWeight: '600', letterSpacing: 0.5 },
+  pickerWrapper: { backgroundColor: '#1A2622', borderRadius: 14, marginTop: 8, marginBottom: 16, paddingVertical: 8 },
+
   celebrationBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.94)' },
   celebrationScroll: { paddingVertical: 40, paddingHorizontal: 20, alignItems: 'center' },
   celebrationContent: { width: '100%', alignItems: 'center' },
 
-  ringWrapper: {
-    width: RING_SIZE,
-    height: RING_SIZE,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 24,
-  },
-  celebrationGlow: {
-    position: 'absolute',
-    width: RING_SIZE,
-    height: RING_SIZE,
-    borderRadius: RING_SIZE / 2,
-  },
-  svgRing: {
-    position: 'absolute',
-  },
-  avatarContainer: {
-    width: RING_SIZE - 30,
-    height: RING_SIZE - 30,
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  avatarCircle: {
-    width: RING_SIZE - 44,
-    height: RING_SIZE - 44,
-    borderRadius: (RING_SIZE - 44) / 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#0F1412',
-  },
+  ringWrapper: { width: RING_SIZE, height: RING_SIZE, alignItems: 'center', justifyContent: 'center', marginBottom: 24 },
+  celebrationGlow: { position: 'absolute', width: RING_SIZE, height: RING_SIZE, borderRadius: RING_SIZE / 2 },
+  svgRing: { position: 'absolute' },
+  avatarContainer: { width: RING_SIZE - 30, height: RING_SIZE - 30, alignItems: 'center', justifyContent: 'center', position: 'relative' },
+  avatarCircle: { width: RING_SIZE - 44, height: RING_SIZE - 44, borderRadius: (RING_SIZE - 44) / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0F1412' },
   celebrationEmoji: { fontSize: 56 },
-  avatarMoodBadge: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: '#0F1412',
-  },
+  avatarMoodBadge: { position: 'absolute', bottom: 0, right: 0, width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#0F1412' },
   avatarMoodBadgeText: { fontSize: 16 },
+  crownWrapper: { position: 'absolute', top: 24, zIndex: 5 },
+  crownEmoji: { fontSize: 34 },
+  sparkleLeft: { position: 'absolute', top: 30, left: 14, fontSize: 18, zIndex: 6 },
+  sparkleRight: { position: 'absolute', top: 20, right: 18, fontSize: 14, zIndex: 6 },
 
-  // Crown sits right on the head
-  crownWrapper: {
-    position: 'absolute',
-    top: 24,
-    zIndex: 5,
-  },
-  crownEmoji: {
-    fontSize: 34,
-  },
-  sparkleLeft: {
-    position: 'absolute',
-    top: 30,
-    left: 14,
-    fontSize: 18,
-    zIndex: 6,
-  },
-  sparkleRight: {
-    position: 'absolute',
-    top: 20,
-    right: 18,
-    fontSize: 14,
-    zIndex: 6,
-  },
+  celebrationEyebrow: { fontSize: 12, fontWeight: '800', letterSpacing: 3, marginBottom: 12 },
+  celebrationTitle: { color: '#FFFFFF', fontSize: 30, fontWeight: '900', textAlign: 'center', marginBottom: 8, paddingHorizontal: 10 },
+  celebrationSubtitle: { color: '#8A9A94', fontSize: 15, textAlign: 'center', marginBottom: 24 },
 
-  celebrationEyebrow: {
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 3,
-    marginBottom: 12,
-  },
-  celebrationTitle: {
-    color: '#FFFFFF',
-    fontSize: 30,
-    fontWeight: '900',
-    textAlign: 'center',
-    marginBottom: 8,
-    paddingHorizontal: 10,
-  },
-  celebrationSubtitle: {
-    color: '#8A9A94',
-    fontSize: 15,
-    textAlign: 'center',
-    marginBottom: 24,
-  },
-
-  statsRow: {
-    flexDirection: 'row',
-    backgroundColor: '#16211D',
-    borderRadius: 20,
-    paddingVertical: 16,
-    paddingHorizontal: 10,
-    marginBottom: 28,
-    width: '100%',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#24332E',
-  },
+  statsRow: { flexDirection: 'row', backgroundColor: '#16211D', borderRadius: 20, paddingVertical: 16, paddingHorizontal: 10, marginBottom: 28, width: '100%', alignItems: 'center', borderWidth: 1, borderColor: '#24332E' },
   statBox: { flex: 1, alignItems: 'center' },
   statNumber: { color: '#FFFFFF', fontSize: 22, fontWeight: '800', marginBottom: 2 },
   statLabel: { color: '#8A9A94', fontSize: 10, fontWeight: '600', letterSpacing: 0.5, textAlign: 'center' },
   statDivider: { width: 1, height: 32, backgroundColor: '#24332E' },
 
   shareCardWrapper: { width: '100%', marginBottom: 24 },
-  shareCard: {
-    width: '100%',
-    backgroundColor: '#1F2A22',
-    borderRadius: 20,
-    padding: 20,
-    paddingTop: 56,
-    borderWidth: 1,
-    borderColor: '#3A4A3F',
-    overflow: 'hidden',
-  },
-  shareCardBanner: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    paddingVertical: 8,
-    alignItems: 'center',
-  },
-  shareCardBannerText: {
-    color: '#0F1412',
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 2,
-  },
+  shareCard: { width: '100%', backgroundColor: '#1F2A22', borderRadius: 20, padding: 20, paddingTop: 56, borderWidth: 1, borderColor: '#3A4A3F', overflow: 'hidden' },
+  shareCardBanner: { position: 'absolute', top: 0, left: 0, right: 0, paddingVertical: 8, alignItems: 'center' },
+  shareCardBannerText: { color: '#0F1412', fontSize: 11, fontWeight: '900', letterSpacing: 2 },
   shareCardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
   shareCardBrand: { color: '#7DD3C0', fontSize: 12, fontWeight: '700', letterSpacing: 1 },
   shareCardBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, borderWidth: 1 },
