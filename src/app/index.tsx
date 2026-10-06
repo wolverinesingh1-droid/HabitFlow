@@ -48,6 +48,8 @@ const AVATARS = [
   { id: 'fire', emoji: '🔥', color: '#FF6B35' },
 ];
 
+const HABIT_ICONS = ['🏃', '🧘', '💧', '📚', '🌱', '🎯', '🎨', '🍎', '💪', '🌙', '✍️', '🎵'];
+
 const MILESTONE_THEMES = [
   { accent: '#7DD3C0', name: 'Teal' },
   { accent: '#B084D6', name: 'Violet' },
@@ -88,6 +90,8 @@ type AppState = {
   celebratedMilestones: number[];
   totalDays: number;
   habitName: string;
+  habitIcon: string;
+  habitWhy: string;
   userName: string;
   avatarId: string;
   reminder: ReminderConfig;
@@ -125,6 +129,8 @@ const createInitialState = (): AppState => ({
   celebratedMilestones: [],
   totalDays: 30,
   habitName: '',
+  habitIcon: '🌱',
+  habitWhy: '',
   userName: '',
   avatarId: 'fox',
   reminder: defaultReminder(),
@@ -134,6 +140,8 @@ const createInitialState = (): AppState => ({
 const createStartedState = (
   totalDays: number,
   habitName: string,
+  habitIcon: string,
+  habitWhy: string,
   userName: string,
   avatarId: string
 ): AppState => {
@@ -145,6 +153,8 @@ const createStartedState = (
     celebratedMilestones: [],
     totalDays,
     habitName,
+    habitIcon,
+    habitWhy,
     userName,
     avatarId,
     reminder: defaultReminder(),
@@ -176,7 +186,9 @@ export default function HomeScreen() {
   const [setupStep, setSetupStep] = useState(1);
   const [inputName, setInputName] = useState('');
   const [inputHabit, setInputHabit] = useState('');
+  const [inputWhy, setInputWhy] = useState('');
   const [selectedAvatar, setSelectedAvatar] = useState('fox');
+  const [selectedIcon, setSelectedIcon] = useState('🌱');
   const [pendingMood, setPendingMood] = useState<string | null>(null);
   const [draftNote, setDraftNote] = useState('');
   const [noteViewerDay, setNoteViewerDay] = useState<DayData | null>(null);
@@ -209,8 +221,11 @@ export default function HomeScreen() {
             celebratedMilestones: parsed.celebratedMilestones || [],
             totalDays: parsed.totalDays || 30,
             habitName: parsed.habitName || 'Morning Meditation',
+            habitIcon: parsed.habitIcon || '🌱',
+            habitWhy: parsed.habitWhy || '',
             userName: parsed.userName || '',
             avatarId: parsed.avatarId || 'fox',
+            dayOffset: parsed.dayOffset || 0,
             reminder: parsed.reminder || defaultReminder(),
             needsSetup: parsed.needsSetup ?? false,
           };
@@ -240,7 +255,6 @@ export default function HomeScreen() {
   const scheduleReminder = async (s: AppState) => {
     try {
       await Notifications.cancelAllScheduledNotificationsAsync();
-
       if (!s.reminder.enabled) return;
 
       const todayCheckedIn = s.days.some(
@@ -258,7 +272,7 @@ export default function HomeScreen() {
 
       await Notifications.scheduleNotificationAsync({
         content: {
-          title: `Time for ${s.habitName} 🌱`,
+          title: `Time for ${s.habitName} ${s.habitIcon}`,
           body: `Don't break the streak. Tap to check in.`,
           sound: true,
         },
@@ -294,9 +308,7 @@ export default function HomeScreen() {
   };
 
   const onChangeTime = (event: any, selectedDate?: Date) => {
-    if (Platform.OS === 'android') {
-      setTimePickerOpen(false);
-    }
+    if (Platform.OS === 'android') setTimePickerOpen(false);
     if (event.type === 'dismissed') return;
     if (selectedDate) {
       setState((prev) => ({
@@ -411,6 +423,8 @@ export default function HomeScreen() {
       createStartedState(
         totalDays,
         inputHabit.trim() || 'Morning Meditation',
+        selectedIcon,
+        inputWhy.trim(),
         inputName.trim() || 'Friend',
         selectedAvatar
       )
@@ -518,7 +532,9 @@ export default function HomeScreen() {
     setSetupStep(1);
     setInputName('');
     setInputHabit('');
+    setInputWhy('');
     setSelectedAvatar('fox');
+    setSelectedIcon('🌱');
     setSettingsOpen(false);
   };
 
@@ -638,6 +654,50 @@ export default function HomeScreen() {
 
           {setupStep === 3 && (
             <>
+              <Text style={styles.setupTitle}>Pick an icon</Text>
+              <Text style={styles.setupSubtitle}>A small symbol for this habit</Text>
+              <View style={styles.iconGrid}>
+                {HABIT_ICONS.map((icon) => (
+                  <TouchableOpacity
+                    key={icon}
+                    style={[styles.iconOption, selectedIcon === icon && styles.iconOptionActive]}
+                    onPress={() => setSelectedIcon(icon)}
+                  >
+                    <Text style={styles.iconEmoji}>{icon}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TouchableOpacity style={styles.nextButton} onPress={() => setSetupStep(4)}>
+                <Text style={styles.nextButtonText}>Next</Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {setupStep === 4 && (
+            <>
+              <Text style={styles.setupTitle}>Why is this important to you?</Text>
+              <Text style={styles.setupSubtitle}>Optional. Your own words, shown on rough days.</Text>
+              <TextInput
+                style={[styles.input, styles.inputMultiline]}
+                placeholder="e.g. I want to feel calmer and more present"
+                placeholderTextColor="#5F6F68"
+                value={inputWhy}
+                onChangeText={setInputWhy}
+                maxLength={140}
+                multiline
+                autoFocus
+              />
+              <TouchableOpacity style={styles.nextButton} onPress={() => setSetupStep(5)}>
+                <Text style={styles.nextButtonText}>Next</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.skipButton} onPress={() => setSetupStep(5)}>
+                <Text style={styles.skipText}>Skip</Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {setupStep === 5 && (
+            <>
               <Text style={styles.setupTitle}>Pick your companion</Text>
               <Text style={styles.setupSubtitle}>This stays with you through the journey</Text>
               <View style={styles.avatarGrid}>
@@ -655,13 +715,13 @@ export default function HomeScreen() {
                   </TouchableOpacity>
                 ))}
               </View>
-              <TouchableOpacity style={styles.nextButton} onPress={() => setSetupStep(4)}>
+              <TouchableOpacity style={styles.nextButton} onPress={() => setSetupStep(6)}>
                 <Text style={styles.nextButtonText}>Next</Text>
               </TouchableOpacity>
             </>
           )}
 
-          {setupStep === 4 && (
+          {setupStep === 6 && (
             <>
               <Text style={styles.setupTitle}>Choose your challenge</Text>
               <Text style={styles.setupSubtitle}>How long do you want to build this habit?</Text>
@@ -682,7 +742,7 @@ export default function HomeScreen() {
           )}
 
           <View style={styles.stepDots}>
-            {[1, 2, 3, 4].map((s) => (
+            {[1, 2, 3, 4, 5, 6].map((s) => (
               <View key={s} style={[styles.stepDot, setupStep >= s && styles.stepDotActive]} />
             ))}
           </View>
@@ -744,12 +804,18 @@ export default function HomeScreen() {
             <TouchableOpacity style={styles.iconButton} onPress={handleReset}>
               <Text style={styles.iconText}>🔄</Text>
             </TouchableOpacity>
+            <TouchableOpacity style={styles.iconButton} onPress={() => setSettingsOpen(true)}>
+              <Text style={styles.iconText}>⚙️</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
         <View style={styles.card}>
           <View style={styles.cardHeader}>
-            <Text style={styles.habitName}>{state.habitName}</Text>
+            <View style={styles.habitTitleRow}>
+              <Text style={styles.habitIconSmall}>{state.habitIcon}</Text>
+              <Text style={styles.habitName}>{state.habitName}</Text>
+            </View>
             <View style={styles.activeBadge}>
               <Text style={styles.activeText}>🔥 Active</Text>
             </View>
@@ -786,6 +852,13 @@ export default function HomeScreen() {
             </View>
           )}
         </View>
+
+        {state.habitWhy ? (
+          <View style={styles.whyCard}>
+            <Text style={styles.whyLabel}>WHY THIS MATTERS</Text>
+            <Text style={styles.whyText}>"{state.habitWhy}"</Text>
+          </View>
+        ) : null}
 
         <Text style={styles.milestoneLabel}>Milestone</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.milestoneScroll}>
@@ -896,6 +969,14 @@ export default function HomeScreen() {
               <View style={styles.modalHandle} />
               <Text style={styles.modalTitle}>Rough day, huh?</Text>
               <Text style={styles.modalSubtitle}>No pressure. A note helps you spot patterns later.</Text>
+
+              {state.habitWhy ? (
+                <View style={styles.whyRememberBox}>
+                  <Text style={styles.whyRememberLabel}>Remember why you started</Text>
+                  <Text style={styles.whyRememberText}>"{state.habitWhy}"</Text>
+                </View>
+              ) : null}
+
               <TextInput
                 style={styles.noteInput}
                 placeholder="What made today hard? (optional)"
@@ -937,7 +1018,7 @@ export default function HomeScreen() {
         </Pressable>
       </Modal>
 
-      {/* Settings + native time picker */}
+      {/* Settings + reminder */}
       <Modal visible={settingsOpen} transparent animationType="slide" onRequestClose={() => setSettingsOpen(false)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setSettingsOpen(false)}>
           <Pressable style={styles.modalSheet} onPress={(e) => e.stopPropagation()}>
@@ -1087,7 +1168,7 @@ export default function HomeScreen() {
                 {isFinalMilestone ? `You finished, ${state.userName}!` : `You did it, ${state.userName}!`}
               </Text>
               <Text style={styles.celebrationSubtitle}>
-                {celebrationDays.length} days of {state.habitName} — done
+                {celebrationDays.length} days of {state.habitIcon} {state.habitName} — done
               </Text>
 
               <View style={styles.statsRow}>
@@ -1136,7 +1217,10 @@ export default function HomeScreen() {
                     </View>
                     <Text style={styles.shareCardUserName}>{state.userName}</Text>
                   </View>
-                  <Text style={styles.shareCardHabit}>{state.habitName}</Text>
+                  <View style={styles.shareCardHabitRow}>
+                    <Text style={styles.shareCardHabitIcon}>{state.habitIcon}</Text>
+                    <Text style={styles.shareCardHabit}>{state.habitName}</Text>
+                  </View>
                   <Text style={styles.shareCardRange}>
                     D{(celebration! - 1) * MILESTONE_SIZE + 1} → D{Math.min(celebration! * MILESTONE_SIZE, totalDays)}
                   </Text>
@@ -1190,12 +1274,19 @@ const styles = StyleSheet.create({
   setupTitle: { color: '#FFFFFF', fontSize: 28, fontWeight: '800', textAlign: 'center', marginBottom: 8 },
   setupSubtitle: { color: '#8A9A94', fontSize: 15, textAlign: 'center', marginBottom: 32 },
   input: { backgroundColor: '#16211D', borderRadius: 16, paddingHorizontal: 20, paddingVertical: 18, color: '#FFFFFF', fontSize: 18, borderWidth: 1.5, borderColor: '#24332E', marginBottom: 24 },
+  inputMultiline: { minHeight: 100, textAlignVertical: 'top' },
   nextButton: { backgroundColor: '#7DD3C0', borderRadius: 16, paddingVertical: 18, alignItems: 'center' },
   nextButtonDisabled: { opacity: 0.3 },
   nextButtonText: { color: '#0F1412', fontSize: 16, fontWeight: '700' },
+  skipButton: { paddingVertical: 14, alignItems: 'center' },
+  skipText: { color: '#8A9A94', fontSize: 14, fontWeight: '600' },
   avatarGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 24 },
   avatarOption: { width: '22%', aspectRatio: 1, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, marginBottom: 12 },
   avatarEmoji: { fontSize: 32 },
+  iconGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 24 },
+  iconOption: { width: '22%', aspectRatio: 1, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#24332E', backgroundColor: '#16211D', marginBottom: 12 },
+  iconOptionActive: { borderColor: '#7DD3C0', backgroundColor: '#1F3028' },
+  iconEmoji: { fontSize: 30 },
   setupOptions: { gap: 14 },
   setupOption: { backgroundColor: '#16211D', borderRadius: 20, padding: 22, borderWidth: 1.5, borderColor: '#24332E' },
   setupOptionLabel: { color: '#FFFFFF', fontSize: 20, fontWeight: '700', marginBottom: 4 },
@@ -1212,12 +1303,14 @@ const styles = StyleSheet.create({
   miniAvatarBadgeText: { fontSize: 10 },
   appName: { color: '#7DD3C0', fontSize: 14, marginBottom: 4 },
   date: { color: '#FFFFFF', fontSize: 24, fontWeight: '700' },
-  headerIcons: { flexDirection: 'row', gap: 10 },
-  iconButton: { width: 44, height: 44, borderRadius: 12, backgroundColor: '#1A2622', alignItems: 'center', justifyContent: 'center' },
-  iconText: { fontSize: 18 },
+  headerIcons: { flexDirection: 'row', gap: 8 },
+  iconButton: { width: 40, height: 40, borderRadius: 12, backgroundColor: '#1A2622', alignItems: 'center', justifyContent: 'center' },
+  iconText: { fontSize: 16 },
 
-  card: { backgroundColor: '#16211D', borderRadius: 24, padding: 24, marginBottom: 24 },
+  card: { backgroundColor: '#16211D', borderRadius: 24, padding: 24, marginBottom: 16 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  habitTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  habitIconSmall: { fontSize: 22 },
   habitName: { color: '#FFFFFF', fontSize: 20, fontWeight: '600' },
   activeBadge: { backgroundColor: '#3A2F14', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },
   activeText: { color: '#F5C542', fontSize: 13, fontWeight: '600' },
@@ -1238,6 +1331,14 @@ const styles = StyleSheet.create({
 
   reminderPill: { marginTop: 14, backgroundColor: '#1A2622', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12, alignSelf: 'flex-start' },
   reminderPillText: { color: '#F5C542', fontSize: 12, fontWeight: '600' },
+
+  whyCard: { backgroundColor: '#16211D', borderRadius: 16, padding: 18, marginBottom: 24, borderLeftWidth: 3, borderLeftColor: '#7DD3C0' },
+  whyLabel: { color: '#7DD3C0', fontSize: 10, fontWeight: '800', letterSpacing: 1.5, marginBottom: 8 },
+  whyText: { color: '#C9D6D0', fontSize: 15, fontStyle: 'italic', lineHeight: 22 },
+
+  whyRememberBox: { backgroundColor: '#1F3028', borderRadius: 12, padding: 14, marginBottom: 16, borderLeftWidth: 3, borderLeftColor: '#7DD3C0' },
+  whyRememberLabel: { color: '#7DD3C0', fontSize: 10, fontWeight: '800', letterSpacing: 1.5, marginBottom: 6 },
+  whyRememberText: { color: '#C9D6D0', fontSize: 14, fontStyle: 'italic', lineHeight: 20 },
 
   milestoneLabel: { color: '#FFFFFF', fontSize: 18, fontWeight: '700', marginBottom: 12 },
   milestoneScroll: { gap: 10, paddingRight: 20, paddingBottom: 20 },
@@ -1344,7 +1445,9 @@ const styles = StyleSheet.create({
   shareCardAvatarBadge: { position: 'absolute', bottom: -4, right: -4, width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#1F2A22' },
   shareCardAvatarBadgeText: { fontSize: 9 },
   shareCardUserName: { color: '#8A9A94', fontSize: 14, fontWeight: '600' },
-  shareCardHabit: { color: '#FFFFFF', fontSize: 22, fontWeight: '700', marginBottom: 4 },
+  shareCardHabitRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  shareCardHabitIcon: { fontSize: 22 },
+  shareCardHabit: { color: '#FFFFFF', fontSize: 22, fontWeight: '700' },
   shareCardRange: { color: '#8A9A94', fontSize: 13, marginBottom: 16 },
   shareCardEmojiRow: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#16211D', borderRadius: 14, padding: 10, marginBottom: 16 },
   shareCardEmojiCell: { alignItems: 'center', justifyContent: 'center' },
