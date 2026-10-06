@@ -1,9 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Animated, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import ConfettiCannon from 'react-native-confetti-cannon';
+import Svg, { Circle } from 'react-native-svg';
 import { captureRef } from 'react-native-view-shot';
+
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 const MOODS = [
   { emoji: '😄', label: 'Great' },
@@ -35,29 +38,17 @@ const AVATARS = [
   { id: 'fire', emoji: '🔥', color: '#FF6B35' },
 ];
 
-// Avatar mood variants — the companion reacts to the latest check-in
-const AVATAR_MOODS: Record<string, Record<string, string>> = {
-  fox: { happy: '🦊', tired: '😴', low: '🥺', sick: '🤒', fired: '🔥' },
-  panda: { happy: '🐼', tired: '😴', low: '🥺', sick: '🤒', fired: '🔥' },
-  frog: { happy: '🐸', tired: '😴', low: '🥺', sick: '🤒', fired: '🔥' },
-  lion: { happy: '🦁', tired: '😴', low: '🥺', sick: '🤒', fired: '🔥' },
-  octopus: { happy: '🐙', tired: '😴', low: '🥺', sick: '🤒', fired: '🔥' },
-  blossom: { happy: '🌸', tired: '😴', low: '🥺', sick: '🤒', fired: '🔥' },
-  bolt: { happy: '⚡', tired: '😴', low: '🥺', sick: '🤒', fired: '🔥' },
-  fire: { happy: '🔥', tired: '😴', low: '🥺', sick: '🤒', fired: '🔥' },
-};
+const MILESTONE_THEMES = [
+  { accent: '#7DD3C0', name: 'Teal' },
+  { accent: '#B084D6', name: 'Violet' },
+  { accent: '#F5C542', name: 'Gold' },
+  { accent: '#FF6B6B', name: 'Coral' },
+  { accent: '#4ECDC4', name: 'Aqua' },
+  { accent: '#F5A623', name: 'Amber' },
+];
 
-const getAvatarMoodVariant = (avatarId: string, lastMood?: string): string => {
-  const base = AVATARS.find((a) => a.id === avatarId);
-  if (!base) return '🌱';
-  if (!lastMood) return base.emoji;
-  const variants = AVATAR_MOODS[avatarId] || {};
-  if (lastMood === '😴' || lastMood === '😫') return variants.tired || base.emoji;
-  if (lastMood === '😔') return variants.low || base.emoji;
-  if (lastMood === '🤒') return variants.sick || base.emoji;
-  if (lastMood === '🔥' || lastMood === '😄') return variants.fired || base.emoji;
-  return variants.happy || base.emoji;
-};
+const getMilestoneTheme = (milestone: number) =>
+  MILESTONE_THEMES[(milestone - 1) % MILESTONE_THEMES.length];
 
 const STORAGE_KEY = 'gracedays_days_v1';
 const MILESTONE_SIZE = 10;
@@ -146,6 +137,11 @@ const recomputeStatuses = (s: AppState): DayData[] => {
   });
 };
 
+const RING_SIZE = 170;
+const RING_STROKE = 6;
+const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
 export default function HomeScreen() {
   const [activeMilestone, setActiveMilestone] = useState(1);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -163,6 +159,18 @@ export default function HomeScreen() {
   const [reflectionText, setReflectionText] = useState('');
   const [confettiKey, setConfettiKey] = useState(0);
   const cardRef = useRef<View>(null);
+
+  // Animated values
+  const ringProgress = useRef(new Animated.Value(0)).current;
+  const glowPulse = useRef(new Animated.Value(0)).current;
+  const avatarScale = useRef(new Animated.Value(0.3)).current;
+  const cardFade = useRef(new Animated.Value(0)).current;
+  const cardSlide = useRef(new Animated.Value(20)).current;
+  const crownDrop = useRef(new Animated.Value(-80)).current;
+  const crownPulse = useRef(new Animated.Value(1)).current;
+  const sparkle1 = useRef(new Animated.Value(0)).current;
+  const sparkle2 = useRef(new Animated.Value(0)).current;
+  const sparkle2Y = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     const load = async () => {
@@ -197,13 +205,128 @@ export default function HomeScreen() {
     );
   }, [state, loaded]);
 
+  // Confetti fires ONCE per celebration open (no loop)
   useEffect(() => {
     if (celebration === null) return;
-    setConfettiKey((k) => k + 1);
-    const interval = setInterval(() => {
-      setConfettiKey((k) => k + 1);
-    }, 2500);
-    return () => clearInterval(interval);
+    setConfettiKey(1);
+  }, [celebration]);
+
+  useEffect(() => {
+    if (celebration === null) {
+      ringProgress.setValue(0);
+      glowPulse.setValue(0);
+      avatarScale.setValue(0.3);
+      cardFade.setValue(0);
+      cardSlide.setValue(20);
+      crownDrop.setValue(-80);
+      crownPulse.setValue(1);
+      sparkle1.setValue(0);
+      sparkle2.setValue(0);
+      sparkle2Y.setValue(0);
+      return;
+    }
+
+    ringProgress.setValue(0);
+    glowPulse.setValue(0);
+    avatarScale.setValue(0.3);
+    cardFade.setValue(0);
+    cardSlide.setValue(20);
+    crownDrop.setValue(-80);
+    crownPulse.setValue(1);
+    sparkle1.setValue(0);
+    sparkle2.setValue(0);
+    sparkle2Y.setValue(0);
+
+    Animated.sequence([
+      Animated.spring(avatarScale, {
+        toValue: 1,
+        friction: 5,
+        tension: 60,
+        useNativeDriver: true,
+      }),
+      Animated.parallel([
+        Animated.timing(ringProgress, {
+          toValue: 1,
+          duration: 1200,
+          useNativeDriver: false,
+        }),
+        Animated.spring(crownDrop, {
+          toValue: 0,
+          friction: 6,
+          tension: 40,
+          useNativeDriver: true,
+        }),
+        Animated.timing(sparkle1, {
+          toValue: 1,
+          duration: 500,
+          delay: 600,
+          useNativeDriver: true,
+        }),
+        Animated.timing(sparkle2, {
+          toValue: 1,
+          duration: 500,
+          delay: 800,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.parallel([
+        Animated.timing(cardFade, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+        Animated.timing(cardSlide, {
+          toValue: 0,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start();
+
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(glowPulse, {
+          toValue: 1,
+          duration: 1400,
+          useNativeDriver: true,
+        }),
+        Animated.timing(glowPulse, {
+          toValue: 0,
+          duration: 1400,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(crownPulse, {
+          toValue: 1.08,
+          duration: 900,
+          useNativeDriver: true,
+        }),
+        Animated.timing(crownPulse, {
+          toValue: 1,
+          duration: 900,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(sparkle2Y, {
+          toValue: -6,
+          duration: 1200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(sparkle2Y, {
+          toValue: 0,
+          duration: 1200,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
   }, [celebration]);
 
   useEffect(() => {
@@ -250,15 +373,13 @@ export default function HomeScreen() {
   const progressPercent = totalDays > 0 ? Math.round((completedCount / totalDays) * 100) : 0;
   const activeAvatar = AVATARS.find((a) => a.id === state.avatarId) || AVATARS[0];
 
-  // Resilience score: how often you kept going after a rough day
   const totalRoughDays = graceUsedCount + missedCount;
   const resilienceScore = totalRoughDays === 0
     ? 100
     : Math.round((graceUsedCount / totalRoughDays) * 100);
 
-  // Latest mood for the avatar
   const latestCompleted = [...days].reverse().find((d) => d.status === 'completed' && d.mood);
-  const avatarVariant = getAvatarMoodVariant(state.avatarId, latestCompleted?.mood);
+  const latestMood = latestCompleted?.mood;
 
   const getDaysForMilestone = (milestone: number) => {
     const start = (milestone - 1) * MILESTONE_SIZE + 1;
@@ -317,7 +438,6 @@ export default function HomeScreen() {
         (x) => x.status === 'grace' && Math.ceil(x.day / MILESTONE_SIZE) === milestone
       ).length;
       if (graceUsed < GRACE_PER_MILESTONE) {
-        // Offer the reflection prompt before applying grace
         setReflectionDay(d.day);
         setReflectionText('');
       }
@@ -420,6 +540,8 @@ export default function HomeScreen() {
                 onChangeText={setInputName}
                 maxLength={20}
                 autoFocus
+                returnKeyType="next"
+                onSubmitEditing={() => inputName.trim() && setSetupStep(2)}
               />
               <TouchableOpacity
                 style={[styles.nextButton, !inputName.trim() && styles.nextButtonDisabled]}
@@ -443,6 +565,8 @@ export default function HomeScreen() {
                 onChangeText={setInputHabit}
                 maxLength={30}
                 autoFocus
+                returnKeyType="next"
+                onSubmitEditing={() => inputHabit.trim() && setSetupStep(3)}
               />
               <TouchableOpacity
                 style={[styles.nextButton, !inputHabit.trim() && styles.nextButtonDisabled]}
@@ -457,7 +581,7 @@ export default function HomeScreen() {
           {setupStep === 3 && (
             <>
               <Text style={styles.setupTitle}>Pick your companion</Text>
-              <Text style={styles.setupSubtitle}>It reacts to how you feel each day</Text>
+              <Text style={styles.setupSubtitle}>This stays with you through the journey</Text>
               <View style={styles.avatarGrid}>
                 {AVATARS.map((a) => (
                   <TouchableOpacity
@@ -526,13 +650,39 @@ export default function HomeScreen() {
   const finalDay = celebrationDays[celebrationDays.length - 1];
   const finalNote = finalDay?.note;
 
+  const celebrationCompleted = celebrationDays.filter((d) => d.status === 'completed').length;
+  const celebrationGrace = celebrationDays.filter((d) => d.status === 'grace').length;
+  const celebrationMoods = celebrationDays.filter((d) => d.status === 'completed' && d.mood);
+  const milestoneTheme = celebration ? getMilestoneTheme(celebration) : MILESTONE_THEMES[0];
+  const isFinalMilestone = celebration === totalMilestones;
+
+  const glowOpacity = glowPulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.12, 0.28],
+  });
+
+  const glowScale = glowPulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.12],
+  });
+
+  const ringStrokeDashoffset = ringProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [RING_CIRCUMFERENCE, 0],
+  });
+
   return (
     <>
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <View style={[styles.miniAvatar, { backgroundColor: activeAvatar.color + '33', borderColor: activeAvatar.color }]}>
-              <Text style={styles.miniAvatarEmoji}>{avatarVariant}</Text>
+              <Text style={styles.miniAvatarEmoji}>{activeAvatar.emoji}</Text>
+              {latestMood && (
+                <View style={[styles.miniAvatarBadge, { backgroundColor: milestoneTheme.accent }]}>
+                  <Text style={styles.miniAvatarBadgeText}>{latestMood}</Text>
+                </View>
+              )}
             </View>
             <View>
               <Text style={styles.appName}>{state.userName}</Text>
@@ -568,7 +718,6 @@ export default function HomeScreen() {
             <View style={[styles.progressBarFill, { width: `${progressPercent}%` }]} />
           </View>
 
-          {/* Resilience score — gentle alternative to streak pressure */}
           <View style={styles.resilienceRow}>
             <View style={styles.resiliencePill}>
               <Text style={styles.resilienceLabel}>Resilience</Text>
@@ -695,7 +844,6 @@ export default function HomeScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Reflection prompt when using a grace day */}
       <Modal
         visible={reflectionDay !== null}
         transparent
@@ -774,87 +922,249 @@ export default function HomeScreen() {
         onRequestClose={() => setCelebration(null)}
       >
         <View style={styles.celebrationBackdrop}>
-          {celebration !== null && (
+          {celebration !== null && confettiKey > 0 && (
             <ConfettiCannon
               key={`left-${confettiKey}`}
-              count={100}
+              count={140}
               origin={{ x: -10, y: -20 }}
               fadeOut={false}
               autoStart
-              fallSpeed={1200}
-              explosionSpeed={200}
-              colors={[activeAvatar.color, '#7DD3C0', '#F5C542', '#FF6B6B', '#B084D6', '#FFFFFF', '#F5A623']}
+              fallSpeed={1400}
+              explosionSpeed={150}
+              colors={[milestoneTheme.accent, activeAvatar.color, '#7DD3C0', '#F5C542', '#FF6B6B', '#FFFFFF']}
             />
           )}
-          {celebration !== null && (
+          {celebration !== null && confettiKey > 0 && (
             <ConfettiCannon
               key={`right-${confettiKey}`}
-              count={100}
+              count={140}
               origin={{ x: 400, y: -20 }}
               fadeOut={false}
               autoStart
-              fallSpeed={1200}
-              explosionSpeed={200}
-              colors={[activeAvatar.color, '#7DD3C0', '#F5C542', '#FF6B6B', '#B084D6', '#FFFFFF', '#F5A623']}
+              fallSpeed={1400}
+              explosionSpeed={150}
+              colors={[milestoneTheme.accent, activeAvatar.color, '#7DD3C0', '#F5C542', '#FF6B6B', '#FFFFFF']}
             />
           )}
-          <View style={styles.celebrationContent}>
-            <View style={[styles.celebrationGlow, { backgroundColor: activeAvatar.color }]} />
-            <Text style={styles.celebrationEmoji}>{avatarVariant}</Text>
-            <Text style={styles.celebrationTitle}>Milestone {celebration} Complete!</Text>
-            <Text style={styles.celebrationSubtitle}>
-              {celebrationDays.length} days of {state.habitName}
-            </Text>
+          <ScrollView contentContainerStyle={styles.celebrationScroll} showsVerticalScrollIndicator={false}>
+            <View style={styles.celebrationContent}>
 
-            <View ref={cardRef} collapsable={false} style={styles.shareCard}>
-              <View style={styles.shareCardTop}>
-                <Text style={styles.shareCardBrand}>GraceDays</Text>
-                <View style={styles.shareCardBadge}>
-                  <Text style={styles.shareCardBadgeText}>M{celebration}</Text>
-                </View>
+              <View style={styles.ringWrapper}>
+                <Animated.View
+                  style={[
+                    styles.celebrationGlow,
+                    {
+                      backgroundColor: milestoneTheme.accent,
+                      opacity: glowOpacity,
+                      transform: [{ scale: glowScale }],
+                    },
+                  ]}
+                />
+
+                <Svg
+                  width={RING_SIZE}
+                  height={RING_SIZE}
+                  style={styles.svgRing}
+                >
+                  <Circle
+                    cx={RING_SIZE / 2}
+                    cy={RING_SIZE / 2}
+                    r={RING_RADIUS}
+                    stroke={milestoneTheme.accent + '22'}
+                    strokeWidth={RING_STROKE}
+                    fill="transparent"
+                  />
+                  <AnimatedCircle
+                    cx={RING_SIZE / 2}
+                    cy={RING_SIZE / 2}
+                    r={RING_RADIUS}
+                    stroke={milestoneTheme.accent}
+                    strokeWidth={RING_STROKE}
+                    strokeLinecap="round"
+                    fill="transparent"
+                    strokeDasharray={`${RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`}
+                    strokeDashoffset={ringStrokeDashoffset}
+                    transform={`rotate(-90 ${RING_SIZE / 2} ${RING_SIZE / 2})`}
+                  />
+                </Svg>
+
+                <Animated.View
+                  style={[
+                    styles.avatarContainer,
+                    { transform: [{ scale: avatarScale }] },
+                  ]}
+                >
+                  <View style={styles.avatarCircle}>
+                    <Text style={styles.celebrationEmoji}>{activeAvatar.emoji}</Text>
+                  </View>
+
+                  {latestMood && (
+                    <View style={[styles.avatarMoodBadge, { backgroundColor: milestoneTheme.accent }]}>
+                      <Text style={styles.avatarMoodBadgeText}>{latestMood}</Text>
+                    </View>
+                  )}
+                </Animated.View>
+
+                <Animated.View
+                  style={[
+                    styles.crownWrapper,
+                    { transform: [{ translateY: crownDrop }, { scale: crownPulse }] },
+                  ]}
+                >
+                  <Text style={styles.crownEmoji}>👑</Text>
+                </Animated.View>
+
+                <Animated.Text
+                  style={[
+                    styles.sparkleLeft,
+                    {
+                      opacity: sparkle1,
+                      transform: [{ translateY: sparkle2Y }],
+                    },
+                  ]}
+                >
+                  ✨
+                </Animated.Text>
+
+                <Animated.Text
+                  style={[
+                    styles.sparkleRight,
+                    {
+                      opacity: sparkle2,
+                      transform: [
+                        {
+                          translateY: sparkle2Y.interpolate({
+                            inputRange: [-6, 0],
+                            outputRange: [6, 0],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                >
+                  ✨
+                </Animated.Text>
               </View>
-              <View style={styles.shareCardUserRow}>
-                <View style={[styles.shareCardAvatar, { backgroundColor: activeAvatar.color + '33', borderColor: activeAvatar.color }]}>
-                  <Text style={styles.shareCardAvatarEmoji}>{avatarVariant}</Text>
-                </View>
-                <Text style={styles.shareCardUserName}>{state.userName}</Text>
-              </View>
-              <Text style={styles.shareCardHabit}>{state.habitName}</Text>
-              <Text style={styles.shareCardRange}>
-                D{(celebration! - 1) * MILESTONE_SIZE + 1} → D
-                {Math.min(celebration! * MILESTONE_SIZE, totalDays)}
+
+              <Text style={[styles.celebrationEyebrow, { color: milestoneTheme.accent }]}>
+                {isFinalMilestone ? 'CHALLENGE COMPLETE' : `MILESTONE ${celebration} · COMPLETE`}
               </Text>
-              <View style={styles.shareCardEmojiRow}>
-                {celebrationDays.map((d) => (
-                  <View key={d.day} style={styles.shareCardEmojiCell}>
-                    <Text style={styles.shareCardEmojiText}>
-                      {d.status === 'completed' && d.mood ? d.mood : '🛡️'}
+
+              <Text style={styles.celebrationTitle}>
+                {isFinalMilestone ? `You finished, ${state.userName}!` : `You did it, ${state.userName}!`}
+              </Text>
+
+              <Text style={styles.celebrationSubtitle}>
+                {celebrationDays.length} days of {state.habitName} — done
+              </Text>
+
+              <View style={styles.statsRow}>
+                <View style={styles.statBox}>
+                  <Text style={[styles.statNumber, { color: milestoneTheme.accent }]}>
+                    {celebrationCompleted}
+                  </Text>
+                  <Text style={styles.statLabel}>Completed</Text>
+                </View>
+                <View style={styles.statDivider} />
+                <View style={styles.statBox}>
+                  <Text style={styles.statNumber}>{celebrationGrace}</Text>
+                  <Text style={styles.statLabel}>Grace used</Text>
+                </View>
+                <View style={styles.statDivider} />
+                <View style={styles.statBox}>
+                  <Text style={styles.statNumber}>
+                    {celebrationMoods.length > 0 ? celebrationMoods[0].mood : '🌱'}
+                  </Text>
+                  <Text style={styles.statLabel}>Top mood</Text>
+                </View>
+              </View>
+
+              <Animated.View
+                style={[
+                  styles.shareCardWrapper,
+                  {
+                    opacity: cardFade,
+                    transform: [{ translateY: cardSlide }],
+                  },
+                ]}
+              >
+                <View ref={cardRef} collapsable={false} style={styles.shareCard}>
+                  <View style={[styles.shareCardBanner, { backgroundColor: milestoneTheme.accent }]}>
+                    <Text style={styles.shareCardBannerText}>
+                      {isFinalMilestone ? '🏆  CHALLENGE COMPLETE' : '✓  COMPLETED'}
                     </Text>
                   </View>
-                ))}
-              </View>
-              {finalNote && (
-                <View style={styles.shareCardNoteBox}>
-                  <Text style={styles.shareCardNoteText}>"{finalNote}"</Text>
-                </View>
-              )}
-              <View style={styles.shareCardFooter}>
-                <Text style={styles.shareCardFooterText}>🌱 Milestone Complete.</Text>
-              </View>
-              <Text style={styles.shareCardDate}>
-                {todayISO()} · Keep going! 🚀
-              </Text>
-            </View>
 
-            <View style={styles.celebrationButtons}>
-              <TouchableOpacity style={styles.shareButton} onPress={handleShare}>
-                <Text style={styles.shareButtonText}>📤  Share Progress</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.continueButton} onPress={handleContinue}>
-                <Text style={styles.continueButtonText}>→  Continue Streak</Text>
-              </TouchableOpacity>
+                  <View style={styles.shareCardTop}>
+                    <Text style={styles.shareCardBrand}>GraceDays</Text>
+                    <View style={[styles.shareCardBadge, { backgroundColor: milestoneTheme.accent + '22', borderColor: milestoneTheme.accent }]}>
+                      <Text style={[styles.shareCardBadgeText, { color: milestoneTheme.accent }]}>
+                        M{celebration}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.shareCardUserRow}>
+                    <View style={styles.shareCardAvatarWrapper}>
+                      <Text style={styles.shareCardCrown}>👑</Text>
+                      <View style={[styles.shareCardAvatar, { backgroundColor: activeAvatar.color + '33', borderColor: activeAvatar.color }]}>
+                        <Text style={styles.shareCardAvatarEmoji}>{activeAvatar.emoji}</Text>
+                        {latestMood && (
+                          <View style={[styles.shareCardAvatarBadge, { backgroundColor: milestoneTheme.accent }]}>
+                            <Text style={styles.shareCardAvatarBadgeText}>{latestMood}</Text>
+                          </View>
+                        )}
+                      </View>
+                    </View>
+                    <Text style={styles.shareCardUserName}>{state.userName}</Text>
+                  </View>
+
+                  <Text style={styles.shareCardHabit}>{state.habitName}</Text>
+                  <Text style={styles.shareCardRange}>
+                    D{(celebration! - 1) * MILESTONE_SIZE + 1} → D
+                    {Math.min(celebration! * MILESTONE_SIZE, totalDays)}
+                  </Text>
+
+                  <View style={styles.shareCardEmojiRow}>
+                    {celebrationDays.map((d) => (
+                      <View key={d.day} style={styles.shareCardEmojiCell}>
+                        <Text style={styles.shareCardEmojiText}>
+                          {d.status === 'completed' && d.mood ? d.mood : '🛡️'}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+
+                  {finalNote && (
+                    <View style={styles.shareCardNoteBox}>
+                      <Text style={styles.shareCardNoteText}>"{finalNote}"</Text>
+                    </View>
+                  )}
+
+                  <View style={[styles.shareCardFooter, { backgroundColor: milestoneTheme.accent + '22', borderColor: milestoneTheme.accent + '55' }]}>
+                    <Text style={[styles.shareCardFooterText, { color: milestoneTheme.accent }]}>
+                      🌱 {celebrationCompleted}/10 days · {celebrationGrace} grace
+                    </Text>
+                  </View>
+                  <Text style={styles.shareCardDate}>
+                    {todayISO()} · Keep going! 🚀
+                  </Text>
+                </View>
+              </Animated.View>
+
+              <View style={styles.celebrationButtons}>
+                <TouchableOpacity
+                  style={[styles.shareButton, { backgroundColor: milestoneTheme.accent }]}
+                  onPress={handleShare}
+                >
+                  <Text style={styles.shareButtonText}>📤  Share Progress</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.continueButton} onPress={handleContinue}>
+                  <Text style={styles.continueButtonText}>Continue Streak  →</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
     </>
@@ -888,8 +1198,10 @@ const styles = StyleSheet.create({
 
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  miniAvatar: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5 },
+  miniAvatar: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, position: 'relative' },
   miniAvatarEmoji: { fontSize: 22 },
+  miniAvatarBadge: { position: 'absolute', bottom: -4, right: -4, width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#0F1412' },
+  miniAvatarBadgeText: { fontSize: 10 },
   appName: { color: '#7DD3C0', fontSize: 14, marginBottom: 4 },
   date: { color: '#FFFFFF', fontSize: 24, fontWeight: '700' },
   headerIcons: { flexDirection: 'row', gap: 10 },
@@ -966,20 +1278,155 @@ const styles = StyleSheet.create({
   noteViewerText: { color: '#FFFFFF', fontSize: 17, fontStyle: 'italic', textAlign: 'center', lineHeight: 24, marginBottom: 24 },
   noteViewerEmpty: { color: '#5F6F68', fontSize: 15, textAlign: 'center', marginBottom: 24 },
 
-  celebrationBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  // Celebration
+  celebrationBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.94)' },
+  celebrationScroll: { paddingVertical: 40, paddingHorizontal: 20, alignItems: 'center' },
   celebrationContent: { width: '100%', alignItems: 'center' },
-  celebrationGlow: { position: 'absolute', top: 20, width: 140, height: 140, borderRadius: 70, opacity: 0.25 },
-  celebrationEmoji: { fontSize: 80, marginBottom: 16 },
-  celebrationTitle: { color: '#FFFFFF', fontSize: 28, fontWeight: '800', textAlign: 'center', marginBottom: 6 },
-  celebrationSubtitle: { color: '#8A9A94', fontSize: 15, textAlign: 'center', marginBottom: 28 },
-  shareCard: { width: '100%', backgroundColor: '#1F2A22', borderRadius: 20, padding: 20, borderWidth: 1, borderColor: '#3A4A3F', marginBottom: 24 },
+
+  ringWrapper: {
+    width: RING_SIZE,
+    height: RING_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
+  },
+  celebrationGlow: {
+    position: 'absolute',
+    width: RING_SIZE,
+    height: RING_SIZE,
+    borderRadius: RING_SIZE / 2,
+  },
+  svgRing: {
+    position: 'absolute',
+  },
+  avatarContainer: {
+    width: RING_SIZE - 30,
+    height: RING_SIZE - 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  avatarCircle: {
+    width: RING_SIZE - 44,
+    height: RING_SIZE - 44,
+    borderRadius: (RING_SIZE - 44) / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0F1412',
+  },
+  celebrationEmoji: { fontSize: 56 },
+  avatarMoodBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: '#0F1412',
+  },
+  avatarMoodBadgeText: { fontSize: 16 },
+
+  // Crown sits right on the head
+  crownWrapper: {
+    position: 'absolute',
+    top: 24,
+    zIndex: 5,
+  },
+  crownEmoji: {
+    fontSize: 34,
+  },
+  sparkleLeft: {
+    position: 'absolute',
+    top: 30,
+    left: 14,
+    fontSize: 18,
+    zIndex: 6,
+  },
+  sparkleRight: {
+    position: 'absolute',
+    top: 20,
+    right: 18,
+    fontSize: 14,
+    zIndex: 6,
+  },
+
+  celebrationEyebrow: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 3,
+    marginBottom: 12,
+  },
+  celebrationTitle: {
+    color: '#FFFFFF',
+    fontSize: 30,
+    fontWeight: '900',
+    textAlign: 'center',
+    marginBottom: 8,
+    paddingHorizontal: 10,
+  },
+  celebrationSubtitle: {
+    color: '#8A9A94',
+    fontSize: 15,
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+
+  statsRow: {
+    flexDirection: 'row',
+    backgroundColor: '#16211D',
+    borderRadius: 20,
+    paddingVertical: 16,
+    paddingHorizontal: 10,
+    marginBottom: 28,
+    width: '100%',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#24332E',
+  },
+  statBox: { flex: 1, alignItems: 'center' },
+  statNumber: { color: '#FFFFFF', fontSize: 22, fontWeight: '800', marginBottom: 2 },
+  statLabel: { color: '#8A9A94', fontSize: 10, fontWeight: '600', letterSpacing: 0.5, textAlign: 'center' },
+  statDivider: { width: 1, height: 32, backgroundColor: '#24332E' },
+
+  shareCardWrapper: { width: '100%', marginBottom: 24 },
+  shareCard: {
+    width: '100%',
+    backgroundColor: '#1F2A22',
+    borderRadius: 20,
+    padding: 20,
+    paddingTop: 56,
+    borderWidth: 1,
+    borderColor: '#3A4A3F',
+    overflow: 'hidden',
+  },
+  shareCardBanner: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  shareCardBannerText: {
+    color: '#0F1412',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 2,
+  },
   shareCardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
   shareCardBrand: { color: '#7DD3C0', fontSize: 12, fontWeight: '700', letterSpacing: 1 },
-  shareCardBadge: { backgroundColor: '#3A2F14', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
-  shareCardBadgeText: { color: '#F5C542', fontSize: 12, fontWeight: '700' },
+  shareCardBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, borderWidth: 1 },
+  shareCardBadgeText: { fontSize: 12, fontWeight: '800' },
   shareCardUserRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
-  shareCardAvatar: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5 },
-  shareCardAvatarEmoji: { fontSize: 18 },
+  shareCardAvatarWrapper: { position: 'relative' },
+  shareCardCrown: { position: 'absolute', top: -12, left: 11, fontSize: 13, zIndex: 2 },
+  shareCardAvatar: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, position: 'relative' },
+  shareCardAvatarEmoji: { fontSize: 20 },
+  shareCardAvatarBadge: { position: 'absolute', bottom: -4, right: -4, width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#1F2A22' },
+  shareCardAvatarBadgeText: { fontSize: 9 },
   shareCardUserName: { color: '#8A9A94', fontSize: 14, fontWeight: '600' },
   shareCardHabit: { color: '#FFFFFF', fontSize: 22, fontWeight: '700', marginBottom: 4 },
   shareCardRange: { color: '#8A9A94', fontSize: 13, marginBottom: 16 },
@@ -988,12 +1435,13 @@ const styles = StyleSheet.create({
   shareCardEmojiText: { fontSize: 20 },
   shareCardNoteBox: { backgroundColor: '#16211D', borderRadius: 12, padding: 12, marginBottom: 16 },
   shareCardNoteText: { color: '#8A9A94', fontSize: 13, fontStyle: 'italic', textAlign: 'center' },
-  shareCardFooter: { backgroundColor: '#24332E', borderRadius: 12, paddingVertical: 10, alignItems: 'center', marginBottom: 12 },
-  shareCardFooterText: { color: '#7DD3C0', fontSize: 14, fontWeight: '700' },
-  shareCardDate: { color: '#5F6F68', fontSize: 11 },
+  shareCardFooter: { borderRadius: 12, paddingVertical: 10, alignItems: 'center', marginBottom: 12, borderWidth: 1 },
+  shareCardFooterText: { fontSize: 14, fontWeight: '800' },
+  shareCardDate: { color: '#5F6F68', fontSize: 11, textAlign: 'center' },
+
   celebrationButtons: { width: '100%', gap: 12 },
-  shareButton: { backgroundColor: '#3A2F14', borderRadius: 16, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: '#F5C542' },
-  shareButtonText: { color: '#F5C542', fontSize: 16, fontWeight: '700' },
-  continueButton: { backgroundColor: '#7DD3C0', borderRadius: 16, paddingVertical: 16, alignItems: 'center' },
-  continueButtonText: { color: '#0F1412', fontSize: 16, fontWeight: '700' },
+  shareButton: { borderRadius: 16, paddingVertical: 18, alignItems: 'center' },
+  shareButtonText: { color: '#0F1412', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
+  continueButton: { backgroundColor: 'transparent', borderRadius: 16, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#24332E' },
+  continueButtonText: { color: '#8A9A94', fontSize: 14, fontWeight: '600' },
 });
