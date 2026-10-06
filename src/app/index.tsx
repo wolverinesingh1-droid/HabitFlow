@@ -88,6 +88,7 @@ type AppState = {
   startDate: string;
   dayOffset: number;
   celebratedMilestones: number[];
+  acceptedMilestones: number[];
   totalDays: number;
   habitName: string;
   habitIcon: string;
@@ -127,6 +128,7 @@ const createInitialState = (): AppState => ({
   startDate: todayISO(),
   dayOffset: 0,
   celebratedMilestones: [],
+  acceptedMilestones: [],
   totalDays: 30,
   habitName: '',
   habitIcon: '🌱',
@@ -151,6 +153,7 @@ const createStartedState = (
     startDate,
     dayOffset: 0,
     celebratedMilestones: [],
+    acceptedMilestones: [],
     totalDays,
     habitName,
     habitIcon,
@@ -183,6 +186,7 @@ export default function HomeScreen() {
   const [state, setState] = useState<AppState>(createInitialState);
   const [loaded, setLoaded] = useState(false);
   const [celebration, setCelebration] = useState<number | null>(null);
+  const [acceptOpen, setAcceptOpen] = useState<number | null>(null);
   const [setupStep, setSetupStep] = useState(1);
   const [inputName, setInputName] = useState('');
   const [inputHabit, setInputHabit] = useState('');
@@ -209,6 +213,7 @@ export default function HomeScreen() {
   const sparkle1 = useRef(new Animated.Value(0)).current;
   const sparkle2 = useRef(new Animated.Value(0)).current;
   const sparkle2Y = useRef(new Animated.Value(0)).current;
+  const gracePulse = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     const load = async () => {
@@ -219,6 +224,7 @@ export default function HomeScreen() {
           const hydrated: AppState = {
             ...parsed,
             celebratedMilestones: parsed.celebratedMilestones || [],
+            acceptedMilestones: parsed.acceptedMilestones || [],
             totalDays: parsed.totalDays || 30,
             habitName: parsed.habitName || 'Morning Meditation',
             habitIcon: parsed.habitIcon || '🌱',
@@ -251,6 +257,16 @@ export default function HomeScreen() {
     if (!loaded || state.needsSetup) return;
     scheduleReminder(state);
   }, [state.reminder, state.days, loaded, state.needsSetup]);
+
+  // Grace pulse animation
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(gracePulse, { toValue: 1, duration: 1100, useNativeDriver: true }),
+        Animated.timing(gracePulse, { toValue: 0, duration: 1100, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
 
   const scheduleReminder = async (s: AppState) => {
     try {
@@ -400,6 +416,7 @@ export default function HomeScreen() {
     const totalMilestones = Math.ceil(state.totalDays / MILESTONE_SIZE);
     for (let m = 1; m <= totalMilestones; m++) {
       if (state.celebratedMilestones.includes(m)) continue;
+      if (state.acceptedMilestones.includes(m)) continue;
       const milestoneDays = state.days.filter(
         (d) => d.day >= (m - 1) * MILESTONE_SIZE + 1 && d.day <= m * MILESTONE_SIZE
       );
@@ -456,6 +473,40 @@ export default function HomeScreen() {
   };
 
   const visibleDays = getDaysForMilestone(activeMilestone);
+
+  // Current milestone analysis
+  const currentMilestoneMissed = visibleDays.filter((d) => d.status === 'missed').length;
+  const currentMilestoneGrace = visibleDays.filter((d) => d.status === 'grace').length;
+  const currentMilestoneGraceRemaining = GRACE_PER_MILESTONE - currentMilestoneGrace;
+  const graciableMissedCount = Math.min(currentMilestoneMissed, currentMilestoneGraceRemaining);
+  const showGraceBanner = graciableMissedCount > 0;
+
+  // Days that can still be graced (first N missed days in current milestone, N = remaining grace)
+  const missedDaysInMilestone = visibleDays.filter((d) => d.status === 'missed');
+  const graciableDays = missedDaysInMilestone.slice(0, currentMilestoneGraceRemaining).map((d) => d.day);
+
+  // Per-milestone: does it have graciable missed days?
+  const milestoneHasGraciable = (m: number) => {
+    const mDays = getDaysForMilestone(m);
+    const mMissed = mDays.filter((d) => d.status === 'missed').length;
+    const mGrace = mDays.filter((d) => d.status === 'grace').length;
+    return mMissed > 0 && mGrace < GRACE_PER_MILESTONE;
+  };
+
+  // Per-milestone: is it failed but not yet accepted or celebrated?
+  const milestoneIsStuck = (m: number) => {
+    if (state.celebratedMilestones.includes(m)) return false;
+    if (state.acceptedMilestones.includes(m)) return false;
+    const mDays = getDaysForMilestone(m);
+    if (mDays.length === 0) return false;
+    const mMissed = mDays.filter((d) => d.status === 'missed').length;
+    const mGrace = mDays.filter((d) => d.status === 'grace').length;
+    const mCompleted = mDays.filter((d) => d.status === 'completed').length;
+    const mToday = mDays.filter((d) => d.status === 'today').length;
+    const mFuture = mDays.filter((d) => d.status === 'future').length;
+    // Stuck = no more grace available, still has missed days, and no more days to complete
+    return mMissed > 0 && mGrace >= GRACE_PER_MILESTONE && mCompleted + mGrace < MILESTONE_SIZE && mToday === 0 && mFuture === 0;
+  };
 
   const openPicker = () => {
     setPendingMood(null);
@@ -522,6 +573,15 @@ export default function HomeScreen() {
     }));
     setReflectionDay(null);
     setReflectionText('');
+  };
+
+  const handleAcceptAndContinue = (milestone: number) => {
+    setState((prev) => ({
+      ...prev,
+      acceptedMilestones: [...prev.acceptedMilestones, milestone],
+    }));
+    setAcceptOpen(null);
+    setActiveMilestone(milestone + 1);
   };
 
   const handleReset = async () => {
@@ -767,12 +827,18 @@ export default function HomeScreen() {
   const celebrationMoods = celebrationDays.filter((d) => d.status === 'completed' && d.mood);
   const milestoneTheme = celebration ? getMilestoneTheme(celebration) : MILESTONE_THEMES[0];
   const isFinalMilestone = celebration === totalMilestones;
+  const isStuckMilestone = activeMilestone > 0 && milestoneIsStuck(activeMilestone);
 
   const glowOpacity = glowPulse.interpolate({ inputRange: [0, 1], outputRange: [0.12, 0.28] });
   const glowScale = glowPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] });
   const ringStrokeDashoffset = ringProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [RING_CIRCUMFERENCE, 0],
+  });
+
+  const gracePulseOpacity = gracePulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0.4],
   });
 
   return (
@@ -860,19 +926,58 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
+        {showGraceBanner ? (
+          <View style={styles.graceBanner}>
+            <Text style={styles.graceBannerIcon}>⚠️</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.graceBannerText}>
+                {graciableMissedCount === 1
+                  ? `1 missed day — tap to use a grace day`
+                  : `${graciableMissedCount} missed days — tap to use your grace days`}
+              </Text>
+              <Text style={styles.graceBannerHint}>
+                You've got {currentMilestoneGraceRemaining} grace {currentMilestoneGraceRemaining === 1 ? 'day' : 'days'} left in this milestone
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
+        {isStuckMilestone ? (
+          <View style={styles.stuckBanner}>
+            <Text style={styles.stuckIcon}>💪</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.stuckTitle}>Out of grace days for this milestone</Text>
+              <Text style={styles.stuckHint}>
+                That's okay — showing up is what counts. You can still keep going.
+              </Text>
+              <TouchableOpacity
+                style={styles.stuckButton}
+                onPress={() => setAcceptOpen(activeMilestone)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.stuckButtonText}>Keep going anyway →</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
+
         <Text style={styles.milestoneLabel}>Milestone</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.milestoneScroll}>
-          {Array.from({ length: totalMilestones }, (_, i) => i + 1).map((m) => (
-            <TouchableOpacity
-              key={m}
-              style={[styles.milestoneTab, activeMilestone === m && styles.milestoneTabActive]}
-              onPress={() => setActiveMilestone(m)}
-            >
-              <Text style={[styles.milestoneText, activeMilestone === m && styles.milestoneTextActive]}>
-                M{m}
-              </Text>
-            </TouchableOpacity>
-          ))}
+          {Array.from({ length: totalMilestones }, (_, i) => i + 1).map((m) => {
+            const hasGraciable = milestoneHasGraciable(m);
+            return (
+              <TouchableOpacity
+                key={m}
+                style={[styles.milestoneTab, activeMilestone === m && styles.milestoneTabActive]}
+                onPress={() => setActiveMilestone(m)}
+              >
+                <Text style={[styles.milestoneText, activeMilestone === m && styles.milestoneTextActive]}>
+                  M{m}
+                </Text>
+                {hasGraciable && activeMilestone !== m && <View style={styles.milestoneDot} />}
+              </TouchableOpacity>
+            );
+          })}
         </ScrollView>
 
         <Text style={styles.sectionLabel}>
@@ -887,6 +992,7 @@ export default function HomeScreen() {
             const isCompleted = d.status === 'completed';
             const isGrace = d.status === 'grace';
             const hasNote = !!d.note || !!d.reflection;
+            const canBeGraced = graciableDays.includes(d.day);
 
             return (
               <TouchableOpacity
@@ -896,7 +1002,10 @@ export default function HomeScreen() {
                 activeOpacity={0.6}
               >
                 {isCompleted && d.mood && <Text style={styles.dayEmoji}>{d.mood}</Text>}
-                {isMissed && <Text style={styles.missedX}>✕</Text>}
+                {isMissed && !canBeGraced && <Text style={styles.missedX}>✕</Text>}
+                {isMissed && canBeGraced && (
+                  <Animated.Text style={[styles.missedX, { opacity: gracePulseOpacity }]}>✕</Animated.Text>
+                )}
                 {isGrace && <Text style={styles.dayEmoji}>🛡️</Text>}
                 {isToday && <Text style={styles.todayPlus}>＋</Text>}
                 {hasNote && <View style={styles.noteDot} />}
@@ -995,6 +1104,35 @@ export default function HomeScreen() {
             </Pressable>
           </Pressable>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Keep going anyway — motivational modal */}
+      <Modal visible={acceptOpen !== null} transparent animationType="fade" onRequestClose={() => setAcceptOpen(null)}>
+        <View style={styles.acceptBackdrop}>
+          <View style={styles.acceptCard}>
+            <Text style={styles.acceptEmoji}>🌱</Text>
+            <Text style={styles.acceptTitle}>Still proud of you</Text>
+            <Text style={styles.acceptBody}>
+              This milestone had more rough days than grace days could cover. That's real life — not failure.
+            </Text>
+            <Text style={styles.acceptBody}>
+              The people who build habits aren't the ones who never miss. They're the ones who keep going anyway.
+            </Text>
+            <Text style={styles.acceptQuote}>
+              "Missing a day is not the end. Quitting is."
+            </Text>
+            <TouchableOpacity
+              style={styles.acceptButton}
+              onPress={() => acceptOpen !== null && handleAcceptAndContinue(acceptOpen)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.acceptButtonText}>I'm still going →</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.acceptCancel} onPress={() => setAcceptOpen(null)}>
+              <Text style={styles.acceptCancelText}>Not yet</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
 
       {/* Note viewer */}
@@ -1332,9 +1470,21 @@ const styles = StyleSheet.create({
   reminderPill: { marginTop: 14, backgroundColor: '#1A2622', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12, alignSelf: 'flex-start' },
   reminderPillText: { color: '#F5C542', fontSize: 12, fontWeight: '600' },
 
-  whyCard: { backgroundColor: '#16211D', borderRadius: 16, padding: 18, marginBottom: 24, borderLeftWidth: 3, borderLeftColor: '#7DD3C0' },
+  whyCard: { backgroundColor: '#16211D', borderRadius: 16, padding: 18, marginBottom: 16, borderLeftWidth: 3, borderLeftColor: '#7DD3C0' },
   whyLabel: { color: '#7DD3C0', fontSize: 10, fontWeight: '800', letterSpacing: 1.5, marginBottom: 8 },
   whyText: { color: '#C9D6D0', fontSize: 15, fontStyle: 'italic', lineHeight: 22 },
+
+  graceBanner: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, backgroundColor: '#2A2413', borderRadius: 16, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#F5C542' },
+  graceBannerIcon: { fontSize: 22 },
+  graceBannerText: { color: '#F5C542', fontSize: 15, fontWeight: '700', marginBottom: 4 },
+  graceBannerHint: { color: '#B8A160', fontSize: 12, lineHeight: 16 },
+
+  stuckBanner: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, backgroundColor: '#1F1629', borderRadius: 16, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#B084D6' },
+  stuckIcon: { fontSize: 22 },
+  stuckTitle: { color: '#B084D6', fontSize: 15, fontWeight: '700', marginBottom: 4 },
+  stuckHint: { color: '#9A7CB8', fontSize: 12, lineHeight: 16, marginBottom: 12 },
+  stuckButton: { backgroundColor: '#B084D6', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 16, alignSelf: 'flex-start' },
+  stuckButtonText: { color: '#0F1412', fontSize: 13, fontWeight: '800' },
 
   whyRememberBox: { backgroundColor: '#1F3028', borderRadius: 12, padding: 14, marginBottom: 16, borderLeftWidth: 3, borderLeftColor: '#7DD3C0' },
   whyRememberLabel: { color: '#7DD3C0', fontSize: 10, fontWeight: '800', letterSpacing: 1.5, marginBottom: 6 },
@@ -1342,10 +1492,11 @@ const styles = StyleSheet.create({
 
   milestoneLabel: { color: '#FFFFFF', fontSize: 18, fontWeight: '700', marginBottom: 12 },
   milestoneScroll: { gap: 10, paddingRight: 20, paddingBottom: 20 },
-  milestoneTab: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, backgroundColor: '#1A2622' },
+  milestoneTab: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, backgroundColor: '#1A2622', position: 'relative' },
   milestoneTabActive: { backgroundColor: '#7DD3C0' },
   milestoneText: { color: '#8A9A94', fontSize: 15, fontWeight: '600' },
   milestoneTextActive: { color: '#0F1412' },
+  milestoneDot: { position: 'absolute', top: 4, right: 6, width: 8, height: 8, borderRadius: 4, backgroundColor: '#F5C542' },
 
   sectionLabel: { color: '#8A9A94', fontSize: 14, marginBottom: 14 },
 
@@ -1382,6 +1533,18 @@ const styles = StyleSheet.create({
   confirmButtonText: { color: '#0F1412', fontSize: 16, fontWeight: '700' },
   cancelButton: { paddingVertical: 14, alignItems: 'center' },
   cancelText: { color: '#8A9A94', fontSize: 15, fontWeight: '600' },
+
+  // Keep going anyway modal
+  acceptBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  acceptCard: { backgroundColor: '#16211D', borderRadius: 24, padding: 28, width: '100%', alignItems: 'center', borderWidth: 1, borderColor: '#B084D6' },
+  acceptEmoji: { fontSize: 56, marginBottom: 12 },
+  acceptTitle: { color: '#FFFFFF', fontSize: 24, fontWeight: '800', textAlign: 'center', marginBottom: 16 },
+  acceptBody: { color: '#8A9A94', fontSize: 15, textAlign: 'center', lineHeight: 22, marginBottom: 12 },
+  acceptQuote: { color: '#B084D6', fontSize: 15, fontStyle: 'italic', textAlign: 'center', lineHeight: 22, marginTop: 8, marginBottom: 24 },
+  acceptButton: { backgroundColor: '#B084D6', borderRadius: 16, paddingVertical: 16, paddingHorizontal: 32, alignItems: 'center', width: '100%', marginBottom: 8 },
+  acceptButtonText: { color: '#0F1412', fontSize: 16, fontWeight: '800' },
+  acceptCancel: { paddingVertical: 12, alignItems: 'center' },
+  acceptCancelText: { color: '#8A9A94', fontSize: 14, fontWeight: '600' },
 
   noteViewerSheet: { backgroundColor: '#16211D', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 28, paddingBottom: 40, alignItems: 'center' },
   noteViewerDay: { color: '#7DD3C0', fontSize: 14, fontWeight: '700', letterSpacing: 1, marginBottom: 12 },
