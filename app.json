@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "HabitFlow",
-    "slug": "HabitFlow",
+    "name": "GraceDays",
+    "slug": "gracedays",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",

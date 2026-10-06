@@ -35,7 +35,31 @@ const AVATARS = [
   { id: 'fire', emoji: '🔥', color: '#FF6B35' },
 ];
 
-const STORAGE_KEY = 'habitflow_days_v6';
+// Avatar mood variants — the companion reacts to the latest check-in
+const AVATAR_MOODS: Record<string, Record<string, string>> = {
+  fox: { happy: '🦊', tired: '😴', low: '🥺', sick: '🤒', fired: '🔥' },
+  panda: { happy: '🐼', tired: '😴', low: '🥺', sick: '🤒', fired: '🔥' },
+  frog: { happy: '🐸', tired: '😴', low: '🥺', sick: '🤒', fired: '🔥' },
+  lion: { happy: '🦁', tired: '😴', low: '🥺', sick: '🤒', fired: '🔥' },
+  octopus: { happy: '🐙', tired: '😴', low: '🥺', sick: '🤒', fired: '🔥' },
+  blossom: { happy: '🌸', tired: '😴', low: '🥺', sick: '🤒', fired: '🔥' },
+  bolt: { happy: '⚡', tired: '😴', low: '🥺', sick: '🤒', fired: '🔥' },
+  fire: { happy: '🔥', tired: '😴', low: '🥺', sick: '🤒', fired: '🔥' },
+};
+
+const getAvatarMoodVariant = (avatarId: string, lastMood?: string): string => {
+  const base = AVATARS.find((a) => a.id === avatarId);
+  if (!base) return '🌱';
+  if (!lastMood) return base.emoji;
+  const variants = AVATAR_MOODS[avatarId] || {};
+  if (lastMood === '😴' || lastMood === '😫') return variants.tired || base.emoji;
+  if (lastMood === '😔') return variants.low || base.emoji;
+  if (lastMood === '🤒') return variants.sick || base.emoji;
+  if (lastMood === '🔥' || lastMood === '😄') return variants.fired || base.emoji;
+  return variants.happy || base.emoji;
+};
+
+const STORAGE_KEY = 'gracedays_days_v1';
 const MILESTONE_SIZE = 10;
 const GRACE_PER_MILESTONE = 2;
 
@@ -46,6 +70,7 @@ type DayData = {
   status: DayStatus;
   mood?: string;
   note?: string;
+  reflection?: string;
   date?: string;
 };
 
@@ -134,6 +159,8 @@ export default function HomeScreen() {
   const [pendingMood, setPendingMood] = useState<string | null>(null);
   const [draftNote, setDraftNote] = useState('');
   const [noteViewerDay, setNoteViewerDay] = useState<DayData | null>(null);
+  const [reflectionDay, setReflectionDay] = useState<number | null>(null);
+  const [reflectionText, setReflectionText] = useState('');
   const [confettiKey, setConfettiKey] = useState(0);
   const cardRef = useRef<View>(null);
 
@@ -218,8 +245,20 @@ export default function HomeScreen() {
   const totalDays = state.totalDays;
   const totalMilestones = Math.ceil(totalDays / MILESTONE_SIZE);
   const completedCount = days.filter((d) => d.status === 'completed').length;
+  const graceUsedCount = days.filter((d) => d.status === 'grace').length;
+  const missedCount = days.filter((d) => d.status === 'missed').length;
   const progressPercent = totalDays > 0 ? Math.round((completedCount / totalDays) * 100) : 0;
   const activeAvatar = AVATARS.find((a) => a.id === state.avatarId) || AVATARS[0];
+
+  // Resilience score: how often you kept going after a rough day
+  const totalRoughDays = graceUsedCount + missedCount;
+  const resilienceScore = totalRoughDays === 0
+    ? 100
+    : Math.round((graceUsedCount / totalRoughDays) * 100);
+
+  // Latest mood for the avatar
+  const latestCompleted = [...days].reverse().find((d) => d.status === 'completed' && d.mood);
+  const avatarVariant = getAvatarMoodVariant(state.avatarId, latestCompleted?.mood);
 
   const getDaysForMilestone = (milestone: number) => {
     const start = (milestone - 1) * MILESTONE_SIZE + 1;
@@ -269,7 +308,7 @@ export default function HomeScreen() {
       return;
     }
     if (d.status === 'completed' || d.status === 'grace') {
-      if (d.note || d.mood) setNoteViewerDay(d);
+      if (d.note || d.mood || d.reflection) setNoteViewerDay(d);
       return;
     }
     if (d.status === 'missed') {
@@ -278,14 +317,27 @@ export default function HomeScreen() {
         (x) => x.status === 'grace' && Math.ceil(x.day / MILESTONE_SIZE) === milestone
       ).length;
       if (graceUsed < GRACE_PER_MILESTONE) {
-        setState((prev) => ({
-          ...prev,
-          days: prev.days.map((x) =>
-            x.day === d.day ? { ...x, status: 'grace' } : x
-          ),
-        }));
+        // Offer the reflection prompt before applying grace
+        setReflectionDay(d.day);
+        setReflectionText('');
       }
     }
+  };
+
+  const handleApplyGrace = () => {
+    if (reflectionDay === null) return;
+    const dayToGrace = reflectionDay;
+    const reflection = reflectionText.trim();
+    setState((prev) => ({
+      ...prev,
+      days: prev.days.map((x) =>
+        x.day === dayToGrace
+          ? { ...x, status: 'grace', reflection: reflection || undefined }
+          : x
+      ),
+    }));
+    setReflectionDay(null);
+    setReflectionText('');
   };
 
   const handleReset = async () => {
@@ -354,7 +406,7 @@ export default function HomeScreen() {
     return (
       <View style={styles.setupContainer}>
         <ScrollView contentContainerStyle={styles.setupScroll}>
-          <Text style={styles.setupBrand}>HabitFlow</Text>
+          <Text style={styles.setupBrand}>GraceDays</Text>
 
           {setupStep === 1 && (
             <>
@@ -404,8 +456,8 @@ export default function HomeScreen() {
 
           {setupStep === 3 && (
             <>
-              <Text style={styles.setupTitle}>Pick your avatar</Text>
-              <Text style={styles.setupSubtitle}>This shows on your celebration card</Text>
+              <Text style={styles.setupTitle}>Pick your companion</Text>
+              <Text style={styles.setupSubtitle}>It reacts to how you feel each day</Text>
               <View style={styles.avatarGrid}>
                 {AVATARS.map((a) => (
                   <TouchableOpacity
@@ -480,7 +532,7 @@ export default function HomeScreen() {
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <View style={[styles.miniAvatar, { backgroundColor: activeAvatar.color + '33', borderColor: activeAvatar.color }]}>
-              <Text style={styles.miniAvatarEmoji}>{activeAvatar.emoji}</Text>
+              <Text style={styles.miniAvatarEmoji}>{avatarVariant}</Text>
             </View>
             <View>
               <Text style={styles.appName}>{state.userName}</Text>
@@ -515,6 +567,19 @@ export default function HomeScreen() {
           <View style={styles.progressBarBg}>
             <View style={[styles.progressBarFill, { width: `${progressPercent}%` }]} />
           </View>
+
+          {/* Resilience score — gentle alternative to streak pressure */}
+          <View style={styles.resilienceRow}>
+            <View style={styles.resiliencePill}>
+              <Text style={styles.resilienceLabel}>Resilience</Text>
+              <Text style={styles.resilienceValue}>{resilienceScore}%</Text>
+            </View>
+            <Text style={styles.resilienceHint}>
+              {graceUsedCount > 0
+                ? `You kept going through ${graceUsedCount} rough ${graceUsedCount === 1 ? 'day' : 'days'}`
+                : 'Keep showing up — even with grace days'}
+            </Text>
+          </View>
         </View>
 
         <Text style={styles.milestoneLabel}>Milestone</Text>
@@ -547,7 +612,7 @@ export default function HomeScreen() {
             const isMissed = d.status === 'missed';
             const isCompleted = d.status === 'completed';
             const isGrace = d.status === 'grace';
-            const hasNote = !!d.note;
+            const hasNote = !!d.note || !!d.reflection;
 
             return (
               <TouchableOpacity
@@ -630,6 +695,50 @@ export default function HomeScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* Reflection prompt when using a grace day */}
+      <Modal
+        visible={reflectionDay !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setReflectionDay(null)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalBackdrop}
+        >
+          <Pressable style={styles.modalBackdrop} onPress={() => setReflectionDay(null)}>
+            <Pressable style={styles.modalSheet} onPress={(e) => e.stopPropagation()}>
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalTitle}>Rough day, huh?</Text>
+              <Text style={styles.modalSubtitle}>
+                No pressure. A note helps you spot patterns later.
+              </Text>
+
+              <TextInput
+                style={styles.noteInput}
+                placeholder="What made today hard? (optional)"
+                placeholderTextColor="#5F6F68"
+                value={reflectionText}
+                onChangeText={setReflectionText}
+                maxLength={120}
+                multiline
+              />
+
+              <TouchableOpacity style={styles.confirmButton} onPress={handleApplyGrace}>
+                <Text style={styles.confirmButtonText}>Use Grace Day</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => setReflectionDay(null)}
+              >
+                <Text style={styles.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </Pressable>
+          </Pressable>
+        </KeyboardAvoidingView>
+      </Modal>
+
       <Modal
         visible={noteViewerDay !== null}
         transparent
@@ -640,11 +749,14 @@ export default function HomeScreen() {
           <Pressable style={styles.noteViewerSheet} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.noteViewerDay}>Day {noteViewerDay?.day}</Text>
             <Text style={styles.noteViewerMood}>{noteViewerDay?.mood || '🛡️'}</Text>
+            {noteViewerDay?.reflection && (
+              <Text style={styles.noteViewerReflection}>"{noteViewerDay.reflection}"</Text>
+            )}
             {noteViewerDay?.note ? (
               <Text style={styles.noteViewerText}>"{noteViewerDay.note}"</Text>
-            ) : (
+            ) : !noteViewerDay?.reflection ? (
               <Text style={styles.noteViewerEmpty}>No note for this day</Text>
-            )}
+            ) : null}
             <TouchableOpacity
               style={styles.cancelButton}
               onPress={() => setNoteViewerDay(null)}
@@ -688,7 +800,7 @@ export default function HomeScreen() {
           )}
           <View style={styles.celebrationContent}>
             <View style={[styles.celebrationGlow, { backgroundColor: activeAvatar.color }]} />
-            <Text style={styles.celebrationEmoji}>{activeAvatar.emoji}</Text>
+            <Text style={styles.celebrationEmoji}>{avatarVariant}</Text>
             <Text style={styles.celebrationTitle}>Milestone {celebration} Complete!</Text>
             <Text style={styles.celebrationSubtitle}>
               {celebrationDays.length} days of {state.habitName}
@@ -696,14 +808,14 @@ export default function HomeScreen() {
 
             <View ref={cardRef} collapsable={false} style={styles.shareCard}>
               <View style={styles.shareCardTop}>
-                <Text style={styles.shareCardBrand}>HabitFlow</Text>
+                <Text style={styles.shareCardBrand}>GraceDays</Text>
                 <View style={styles.shareCardBadge}>
                   <Text style={styles.shareCardBadgeText}>M{celebration}</Text>
                 </View>
               </View>
               <View style={styles.shareCardUserRow}>
                 <View style={[styles.shareCardAvatar, { backgroundColor: activeAvatar.color + '33', borderColor: activeAvatar.color }]}>
-                  <Text style={styles.shareCardAvatarEmoji}>{activeAvatar.emoji}</Text>
+                  <Text style={styles.shareCardAvatarEmoji}>{avatarVariant}</Text>
                 </View>
                 <Text style={styles.shareCardUserName}>{state.userName}</Text>
               </View>
@@ -798,6 +910,12 @@ const styles = StyleSheet.create({
   progressBarBg: { height: 8, backgroundColor: '#24332E', borderRadius: 4, overflow: 'hidden' },
   progressBarFill: { height: 8, backgroundColor: '#7DD3C0', borderRadius: 4 },
 
+  resilienceRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 20, paddingTop: 18, borderTopWidth: 1, borderTopColor: '#24332E' },
+  resiliencePill: { backgroundColor: '#1F3028', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, alignItems: 'center' },
+  resilienceLabel: { color: '#8A9A94', fontSize: 10, fontWeight: '600', letterSpacing: 1, marginBottom: 2 },
+  resilienceValue: { color: '#7DD3C0', fontSize: 18, fontWeight: '800' },
+  resilienceHint: { color: '#8A9A94', fontSize: 12, flex: 1, lineHeight: 16 },
+
   milestoneLabel: { color: '#FFFFFF', fontSize: 18, fontWeight: '700', marginBottom: 12 },
   milestoneScroll: { gap: 10, paddingRight: 20, paddingBottom: 20 },
   milestoneTab: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, backgroundColor: '#1A2622' },
@@ -844,6 +962,7 @@ const styles = StyleSheet.create({
   noteViewerSheet: { backgroundColor: '#16211D', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 28, paddingBottom: 40, alignItems: 'center' },
   noteViewerDay: { color: '#7DD3C0', fontSize: 14, fontWeight: '700', letterSpacing: 1, marginBottom: 12 },
   noteViewerMood: { fontSize: 48, marginBottom: 16 },
+  noteViewerReflection: { color: '#B084D6', fontSize: 15, fontStyle: 'italic', textAlign: 'center', lineHeight: 22, marginBottom: 12 },
   noteViewerText: { color: '#FFFFFF', fontSize: 17, fontStyle: 'italic', textAlign: 'center', lineHeight: 24, marginBottom: 24 },
   noteViewerEmpty: { color: '#5F6F68', fontSize: 15, textAlign: 'center', marginBottom: 24 },
 
