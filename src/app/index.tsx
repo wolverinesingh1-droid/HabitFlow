@@ -258,12 +258,11 @@ export default function HomeScreen() {
     scheduleReminder(state);
   }, [state.reminder, state.days, loaded, state.needsSetup]);
 
-  // Grace pulse animation
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
-        Animated.timing(gracePulse, { toValue: 1, duration: 1100, useNativeDriver: true }),
-        Animated.timing(gracePulse, { toValue: 0, duration: 1100, useNativeDriver: true }),
+        Animated.timing(gracePulse, { toValue: 1, duration: 1100, useNativeDriver: false }),
+        Animated.timing(gracePulse, { toValue: 0, duration: 1100, useNativeDriver: false }),
       ])
     ).start();
   }, []);
@@ -474,18 +473,15 @@ export default function HomeScreen() {
 
   const visibleDays = getDaysForMilestone(activeMilestone);
 
-  // Current milestone analysis
   const currentMilestoneMissed = visibleDays.filter((d) => d.status === 'missed').length;
   const currentMilestoneGrace = visibleDays.filter((d) => d.status === 'grace').length;
   const currentMilestoneGraceRemaining = GRACE_PER_MILESTONE - currentMilestoneGrace;
   const graciableMissedCount = Math.min(currentMilestoneMissed, currentMilestoneGraceRemaining);
   const showGraceBanner = graciableMissedCount > 0;
 
-  // Days that can still be graced (first N missed days in current milestone, N = remaining grace)
   const missedDaysInMilestone = visibleDays.filter((d) => d.status === 'missed');
   const graciableDays = missedDaysInMilestone.slice(0, currentMilestoneGraceRemaining).map((d) => d.day);
 
-  // Per-milestone: does it have graciable missed days?
   const milestoneHasGraciable = (m: number) => {
     const mDays = getDaysForMilestone(m);
     const mMissed = mDays.filter((d) => d.status === 'missed').length;
@@ -493,7 +489,6 @@ export default function HomeScreen() {
     return mMissed > 0 && mGrace < GRACE_PER_MILESTONE;
   };
 
-  // Per-milestone: is it failed but not yet accepted or celebrated?
   const milestoneIsStuck = (m: number) => {
     if (state.celebratedMilestones.includes(m)) return false;
     if (state.acceptedMilestones.includes(m)) return false;
@@ -504,7 +499,6 @@ export default function HomeScreen() {
     const mCompleted = mDays.filter((d) => d.status === 'completed').length;
     const mToday = mDays.filter((d) => d.status === 'today').length;
     const mFuture = mDays.filter((d) => d.status === 'future').length;
-    // Stuck = no more grace available, still has missed days, and no more days to complete
     return mMissed > 0 && mGrace >= GRACE_PER_MILESTONE && mCompleted + mGrace < MILESTONE_SIZE && mToday === 0 && mFuture === 0;
   };
 
@@ -581,7 +575,7 @@ export default function HomeScreen() {
       acceptedMilestones: [...prev.acceptedMilestones, milestone],
     }));
     setAcceptOpen(null);
-    setActiveMilestone(milestone + 1);
+    setActiveMilestone(Math.min(milestone + 1, totalMilestones));
   };
 
   const handleReset = async () => {
@@ -836,9 +830,9 @@ export default function HomeScreen() {
     outputRange: [RING_CIRCUMFERENCE, 0],
   });
 
-  const gracePulseOpacity = gracePulse.interpolate({
+  const animatedBorderColor = gracePulse.interpolate({
     inputRange: [0, 1],
-    outputRange: [1, 0.4],
+    outputRange: ['#FF6B6B', '#7A2020'],
   });
 
   return (
@@ -1001,11 +995,14 @@ export default function HomeScreen() {
                 onPress={() => handleDayPress(d)}
                 activeOpacity={0.6}
               >
-                {isCompleted && d.mood && <Text style={styles.dayEmoji}>{d.mood}</Text>}
-                {isMissed && !canBeGraced && <Text style={styles.missedX}>✕</Text>}
                 {isMissed && canBeGraced && (
-                  <Animated.Text style={[styles.missedX, { opacity: gracePulseOpacity }]}>✕</Animated.Text>
+                  <Animated.View
+                    style={[styles.pulseOverlay, { borderColor: animatedBorderColor }]}
+                    pointerEvents="none"
+                  />
                 )}
+                {isCompleted && d.mood && <Text style={styles.dayEmoji}>{d.mood}</Text>}
+                {isMissed && <Text style={styles.missedX}>✕</Text>}
                 {isGrace && <Text style={styles.dayEmoji}>🛡️</Text>}
                 {isToday && <Text style={styles.todayPlus}>＋</Text>}
                 {hasNote && <View style={styles.noteDot} />}
@@ -1024,7 +1021,6 @@ export default function HomeScreen() {
         </View>
       </ScrollView>
 
-      {/* Emoji picker */}
       <Modal visible={pickerOpen} transparent animationType="slide" onRequestClose={() => setPickerOpen(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBackdrop}>
           <Pressable style={styles.modalBackdrop} onPress={() => setPickerOpen(false)}>
@@ -1070,7 +1066,6 @@ export default function HomeScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Reflection prompt */}
       <Modal visible={reflectionDay !== null} transparent animationType="slide" onRequestClose={() => setReflectionDay(null)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBackdrop}>
           <Pressable style={styles.modalBackdrop} onPress={() => setReflectionDay(null)}>
@@ -1106,7 +1101,6 @@ export default function HomeScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Keep going anyway — motivational modal */}
       <Modal visible={acceptOpen !== null} transparent animationType="fade" onRequestClose={() => setAcceptOpen(null)}>
         <View style={styles.acceptBackdrop}>
           <View style={styles.acceptCard}>
@@ -1135,7 +1129,6 @@ export default function HomeScreen() {
         </View>
       </Modal>
 
-      {/* Note viewer */}
       <Modal visible={noteViewerDay !== null} transparent animationType="fade" onRequestClose={() => setNoteViewerDay(null)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setNoteViewerDay(null)}>
           <Pressable style={styles.noteViewerSheet} onPress={(e) => e.stopPropagation()}>
@@ -1156,7 +1149,6 @@ export default function HomeScreen() {
         </Pressable>
       </Modal>
 
-      {/* Settings + reminder */}
       <Modal visible={settingsOpen} transparent animationType="slide" onRequestClose={() => setSettingsOpen(false)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setSettingsOpen(false)}>
           <Pressable style={styles.modalSheet} onPress={(e) => e.stopPropagation()}>
@@ -1212,7 +1204,6 @@ export default function HomeScreen() {
         </Pressable>
       </Modal>
 
-      {/* Celebration */}
       <Modal visible={celebration !== null} transparent animationType="fade" onRequestClose={() => setCelebration(null)}>
         <View style={styles.celebrationBackdrop}>
           {celebration !== null && confettiKey > 0 && (
@@ -1502,6 +1493,7 @@ const styles = StyleSheet.create({
 
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 24 },
   dayCell: { width: '18%', aspectRatio: 1, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: 'transparent' },
+  pulseOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 14, borderWidth: 2 },
   cellCompleted: { backgroundColor: '#1A2622' },
   cellMissed: { backgroundColor: '#3A1A1A', borderColor: '#E74C3C' },
   cellGrace: { backgroundColor: '#1F1629', borderColor: '#B084D6' },
@@ -1534,7 +1526,6 @@ const styles = StyleSheet.create({
   cancelButton: { paddingVertical: 14, alignItems: 'center' },
   cancelText: { color: '#8A9A94', fontSize: 15, fontWeight: '600' },
 
-  // Keep going anyway modal
   acceptBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', padding: 24 },
   acceptCard: { backgroundColor: '#16211D', borderRadius: 24, padding: 28, width: '100%', alignItems: 'center', borderWidth: 1, borderColor: '#B084D6' },
   acceptEmoji: { fontSize: 56, marginBottom: 12 },
